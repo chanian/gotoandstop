@@ -8,6 +8,7 @@ import {
   HAND_CAPSULES, WORLD_VS, TABLE_FS, BACKDROP_FS, GLASS_FS, CAUSTIC_VS, CAUSTIC_FS, GrainShader,
 } from './shaders.js';
 import { Liquid } from './liquid.js';
+import { Ice, MAX_ICE } from './ice.js';
 import { HandRig, HOVER_HEIGHT } from './hand.js';
 import { GpuTimer, Stats } from './perf.js';
 import { createSettings } from './settings.js';
@@ -72,6 +73,21 @@ const U = {
   uCapB: { value: Array.from({ length: HAND_CAPSULES }, () => new THREE.Vector4(0, -100, 0, 0.1)) },
   uHandAmt: { value: 0 },
   uTime: { value: 0 },
+  uIceCount: { value: 0 },
+  uIcePos: { value: Array.from({ length: MAX_ICE }, () => new THREE.Vector3()) },
+  uIceRot: { value: Array.from({ length: MAX_ICE }, () => new THREE.Matrix3()) },
+  uIceHalf: { value: 1.2 },
+  uIceRound: { value: 0.25 },
+  uIceCloud: { value: 0.12 },
+};
+
+const ice = new Ice(GLASS);
+let fillEff = GLASS.fill; // liquid level including what the ice displaces
+const iceEnv = {
+  g: new THREE.Vector3(0, -981, 0),
+  normal: new THREE.Vector3(0, 1, 0),
+  flow: new THREE.Vector3(),
+  surface: (x, z) => fillEff + U.uSlope.value.x * x + U.uSlope.value.y * z + liquid.heightAt(x, z),
 };
 
 // ------------------------------------------------------------------ scene
@@ -168,6 +184,7 @@ const PHYS_DT = 1 / 240;
 let physAcc = 0;
 const prevV = new THREE.Vector3();
 const _axis = new THREE.Vector3();
+const _acc3 = new THREE.Vector3();
 
 function physicsStep(h) {
   prevV.copy(gripV);
@@ -202,6 +219,13 @@ function physicsStep(h) {
   frameAcc.x += (gripV.x - prevV.x) / h;
   frameAcc.y += (gripV.z - prevV.z) / h;
 
+  // ice feels gravity minus the glass's acceleration, in the glass's frame
+  if (ice.cubes.length) {
+    const a3 = ice.clampPseudoAcc(_acc3.subVectors(gripV, prevV).divideScalar(h));
+    iceEnv.g.set(-a3.x, -981 - a3.y, -a3.z).applyQuaternion(_qi.copy(glassQuat).invert());
+    ice.step(h, iceEnv);
+  }
+
   // the hand lets the glass lean into its motion
   const tAcc = holding ? 0.00020 : 0;
   let tx = ((gripV.x - prevV.x) / h) * tAcc, tz = ((gripV.z - prevV.z) / h) * tAcc;
@@ -233,7 +257,7 @@ const _qi = new THREE.Quaternion();
 function updateLiquidUniforms() {
   _n.set(-liquid.slope.x, 1, -liquid.slope.y).normalize().applyQuaternion(_qi.copy(glassQuat).invert());
   const sx = -_n.x / _n.y, sz = -_n.z / _n.y;
-  const max = Math.min((GLASS.H - GLASS.fill - 0.3) / GLASS.Ri, (GLASS.fill - GLASS.base - 0.15) / GLASS.Ri);
+  const max = Math.min((GLASS.H - fillEff - 0.3) / GLASS.Ri, (fillEff - GLASS.base - 0.15) / GLASS.Ri);
   const l = Math.hypot(sx, sz);
   const k = l > max ? max / l : 1;
   U.uSlope.value.set(sx * k, sz * k);
@@ -345,7 +369,16 @@ function frame() {
   if (steps) frameAcc.multiplyScalar(1 / steps);
   updateGlassTransform();
   liquid.update(dt, frameAcc, frameAcc.length());
+  ice.couple(liquid, dt);
+  const fillTarget = Math.min(GLASS.fill + ice.displacement(), GLASS.H - 0.5);
+  fillEff += (fillTarget - fillEff) * (1 - Math.exp(-dt * 10));
+  U.uFillH.value = fillEff;
   updateLiquidUniforms();
+  // ice env for the next frame's physics: surface normal and the slosh's horizontal flow
+  iceEnv.normal.set(-U.uSlope.value.x, 1, -U.uSlope.value.y).normalize();
+  const flowK = Math.min((GLASS.Ri * GLASS.Ri) / (2 * Math.max(fillEff - GLASS.base, 1)), 4);
+  iceEnv.flow.set(liquid.slopeV.x * flowK, 0, liquid.slopeV.y * flowK).applyQuaternion(_qi.copy(glassQuat).invert());
+  ice.writeUniforms(U);
   updateCausticRegion();
 
   // hand
@@ -463,7 +496,12 @@ const settings = createSettings({
   lightIntensity: (v) => { U.uLightColor.value.copy(lightBase).multiplyScalar(v); },
   lightAzimuth: (_, s) => setLightDir(s),
   lightElevation: (_, s) => setLightDir(s),
-  fill: (v) => { GLASS.fill = v; U.uFillH.value = v; },
+  fill: (v) => { GLASS.fill = v; },
+  iceCount: (v) => ice.setCount(v),
+  iceSize: (v) => { ice.size = v; },
+  iceRound: (v) => { U.uIceRound.value = v; },
+  iceCloud: (v) => { U.uIceCloud.value = v * 0.9; },
+  dropIce: () => ice.respawn(),
   showStats: (v) => { statsEl.style.display = v ? '' : 'none'; },
 }, { autoShake: params.has('auto') });
 

@@ -1,6 +1,7 @@
 // All scene units are centimetres. The table top is the plane y = 0.
 
 export const HAND_CAPSULES = 13;
+export const MAX_ICE = 6;
 
 export const UNIFORMS = /* glsl */ `
 uniform vec3 uLightDir;      // unit vector pointing toward the light
@@ -22,31 +23,76 @@ uniform vec4 uCapA[${HAND_CAPSULES}];
 uniform vec4 uCapB[${HAND_CAPSULES}];
 uniform float uHandAmt;
 uniform float uTime;
+uniform int uIceCount;
+uniform vec3 uIcePos[${MAX_ICE}];  // cube centres, glass-local
+uniform mat3 uIceRot[${MAX_ICE}];  // glass-local -> cube space
+uniform float uIceHalf;            // half edge length
+uniform float uIceRound;           // corner rounding, 0..1 of the half edge
+uniform float uIceCloud;           // scattering per cm inside the ice
 `;
 
 // Analytic ray tracer for a thick tumbler holding a height-field liquid.
-// Media: 0 = air, 1 = glass, 2 = whiskey. Define VIEW_TRACE (and a reflColor function)
+// Media: 0 = air, 1 = glass, 2 = whiskey, 3 = ice. Define VIEW_TRACE (and a reflColor function)
 // to accumulate Fresnel reflections for camera rays.
 export const TRACE = /* glsl */ `
 #define IOR_GLASS 1.52
 #define IOR_LIQ 1.36
+#define IOR_ICE 1.31
+#define MAX_ICE ${MAX_ICE}
 #define T_EPS 0.002
 #ifndef MAX_BOUNCES
 #define MAX_BOUNCES 14
 #endif
 const vec3 LIQ_ABSORB = vec3(0.045, 0.15, 0.46);
 const vec3 GLASS_ABSORB = vec3(0.010, 0.005, 0.008);
+const vec3 ICE_ABSORB = vec3(0.020, 0.008, 0.004);
 
 vec3 rippleAt(vec2 xz) { return textureLod(uRipple, xz / (2.0 * uRi) + 0.5, 0.0).rgb; }
 float surfaceY(vec2 xz) { return uFillH + dot(uSlope, xz) + rippleAt(xz).r; }
 
+bool insideIce(vec3 p) {
+  for (int i = 0; i < MAX_ICE; i++) {
+    if (i >= uIceCount) break;
+    vec3 q = abs(uIceRot[i] * (p - uIcePos[i]));
+    if (max(q.x, max(q.y, q.z)) < uIceHalf) return true;
+  }
+  return false;
+}
+
 int mediumAt(vec3 p) {
+  if (uIceCount > 0 && insideIce(p)) return 3;
   float r2 = dot(p.xz, p.xz);
   if (r2 < uRi * uRi && p.y > uBase) return p.y < surfaceY(p.xz) ? 2 : 0;
   if (r2 < uR * uR && p.y > 0.0 && p.y < uH) return 1;
   return 0;
 }
-float iorOf(int m) { return m == 1 ? IOR_GLASS : (m == 2 ? IOR_LIQ : 1.0); }
+float iorOf(int m) { return m == 1 ? IOR_GLASS : (m == 2 ? IOR_LIQ : (m == 3 ? IOR_ICE : 1.0)); }
+
+float safeDiv(float a) { return abs(a) < 1e-6 ? 1e6 : 1.0 / a; }
+
+// Ice cubes: exact box intersection, with the normal of a rounded box so edges catch light like
+// slightly melted ice.
+void hitIce(vec3 o, vec3 d, inout float tb, inout vec3 nb) {
+  float b = uIceHalf;
+  float r = max(uIceRound * b, 0.02);
+  for (int i = 0; i < MAX_ICE; i++) {
+    if (i >= uIceCount) break;
+    vec3 oc = uIceRot[i] * (o - uIcePos[i]);
+    vec3 dc = uIceRot[i] * d;
+    vec3 inv = vec3(safeDiv(dc.x), safeDiv(dc.y), safeDiv(dc.z));
+    vec3 t1 = (-b - oc) * inv, t2 = (b - oc) * inv;
+    vec3 tn = min(t1, t2), tf = max(t1, t2);
+    float tN = max(max(tn.x, tn.y), tn.z);
+    float tF = min(min(tf.x, tf.y), tf.z);
+    if (tN > tF || tF < T_EPS) continue;
+    float t = tN > T_EPS ? tN : tF;
+    if (t < tb) {
+      tb = t;
+      vec3 q = oc + dc * t;
+      nb = transpose(uIceRot[i]) * normalize(q - clamp(q, vec3(r - b), vec3(b - r)));
+    }
+  }
+}
 
 void hitCyl(vec3 o, vec3 d, float rad, float y0, float y1, inout float tb, inout vec3 nb) {
   float a = dot(d.xz, d.xz);
@@ -104,17 +150,38 @@ bool traceGlass(inout vec3 o, inout vec3 d, inout vec3 thr, inout vec3 acc) {
   for (int i = 0; i < MAX_BOUNCES; i++) {
     float tb = 1e9;
     vec3 nb = vec3(0.0, 1.0, 0.0);
-    hitCyl(o, d, uR, 0.0, uH, tb, nb);
-    hitCyl(o, d, uRi, uBase, uH, tb, nb);
-    hitDisk(o, d, uH, uRi, uR, tb, nb);
-    hitDisk(o, d, 0.0, 0.0, uR, tb, nb);
-    hitDisk(o, d, uBase, 0.0, uRi, tb, nb);
-    hitSurface(o, d, tb, nb);
+    // only test what this ray can reach from the medium it's in
+    if (med == 3) {
+      hitIce(o, d, tb, nb); // inside ice the only way out is a cube face
+    } else {
+      hitCyl(o, d, uRi, uBase, uH, tb, nb);
+      hitDisk(o, d, uBase, 0.0, uRi, tb, nb);
+      float rc = uRi + 0.01; // rays that just crossed the inner wall sit exactly on it
+      bool inCavity = med == 2 || (med == 0 && dot(o.xz, o.xz) < rc * rc && o.y < uH + 0.01 && o.y > uBase - 0.01);
+      if (inCavity) {
+        hitSurface(o, d, tb, nb);
+        if (uIceCount > 0) hitIce(o, d, tb, nb);
+      } else {
+        hitCyl(o, d, uR, 0.0, uH, tb, nb);
+        hitDisk(o, d, uH, uRi, uR, tb, nb);
+        hitDisk(o, d, 0.0, 0.0, uR, tb, nb);
+        if (med == 0) hitDisk(o, d, uH, 0.0, uRi, tb, nb); // the open top: not an interface, just a way in
+      }
+    }
     if (tb > 1e8) return med == 0;
 
     vec3 p = o + d * tb;
     if (med == 2) thr *= exp(-LIQ_ABSORB * tb);
     else if (med == 1) thr *= exp(-GLASS_ABSORB * tb);
+    else if (med == 3) {
+      float cloud = 1.0 - exp(-uIceCloud * tb);
+#ifdef VIEW_TRACE
+      acc += thr * cloud * (uLightColor * 0.06 + vec3(0.012, 0.012, 0.013));
+      thr *= exp(-ICE_ABSORB * tb) * (1.0 - cloud);
+#else
+      thr *= exp(-ICE_ABSORB * tb) * (1.0 - cloud * 0.6);
+#endif
+    }
     int nm = mediumAt(p + d * 0.004);
     o = p;
     if (nm == med) continue;

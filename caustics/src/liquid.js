@@ -80,6 +80,14 @@ export class Liquid {
     }
   }
 
+  // ripple height at a glass-local (x, z)
+  heightAt(x, z) {
+    const { N, dx, R } = this;
+    const i = Math.min(N - 1, Math.max(0, Math.floor((x + R) / dx)));
+    const j = Math.min(N - 1, Math.max(0, Math.floor((z + R) / dx)));
+    return this.h[this.src[j * N + i]];
+  }
+
   // acc: world horizontal acceleration of the glass (cm/s^2) as Vector2(x, z).
   update(dt, acc, agitation = 0) {
     // --- slosh plane

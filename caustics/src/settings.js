@@ -10,19 +10,19 @@ const QUALITY_KEYS = [
 
 export const PRESETS = {
   Low: {
-    pixelRatio: 1, causticsOn: true, gridRes: 192, mapRes: 512, causticBlur: false, maxBounces: 6,
+    pixelRatio: 1, causticsOn: true, gridRes: 192, mapRes: 512, causticBlur: false, maxBounces: 8,
     woodOctaves: 3, handShadow: true, liquidRes: 64, bloom: false, grain: true,
   },
   Medium: {
-    pixelRatio: Math.min(DPR, 1.25), causticsOn: true, gridRes: 320, mapRes: 1024, causticBlur: true, maxBounces: 10,
+    pixelRatio: Math.min(DPR, 1.25), causticsOn: true, gridRes: 320, mapRes: 1024, causticBlur: true, maxBounces: 12,
     woodOctaves: 4, handShadow: true, liquidRes: 96, bloom: true, grain: true,
   },
   High: {
-    pixelRatio: Math.min(DPR, 2), causticsOn: true, gridRes: 512, mapRes: 1024, causticBlur: true, maxBounces: 14,
+    pixelRatio: Math.min(DPR, 2), causticsOn: true, gridRes: 512, mapRes: 1024, causticBlur: true, maxBounces: 16,
     woodOctaves: 5, handShadow: true, liquidRes: 96, bloom: true, grain: true,
   },
   Ultra: {
-    pixelRatio: Math.min(DPR, 3), causticsOn: true, gridRes: 768, mapRes: 2048, causticBlur: true, maxBounces: 16,
+    pixelRatio: Math.min(DPR, 3), causticsOn: true, gridRes: 768, mapRes: 2048, causticBlur: true, maxBounces: 20,
     woodOctaves: 5, handShadow: true, liquidRes: 128, bloom: true, grain: true,
   },
 };
@@ -38,6 +38,10 @@ export const DEFAULTS = {
   lightAzimuth: 43,    // degrees from straight behind the glass toward the right
   lightElevation: 28,
   fill: 4.2,
+  iceCount: 3,
+  iceSize: 2.4,
+  iceRound: 0.3,
+  iceCloud: 0.15,
   sloshDamping: 0.045,
   autoShake: false,
   showStats: true,
@@ -105,6 +109,13 @@ export function createSettings(apply, { autoShake = false } = {}) {
   sim.add(state, 'liquidRes', [32, 48, 64, 96, 128, 160]).name('Ripple grid').onChange(() => changed('liquidRes'));
   sim.add(state, 'sloshDamping', 0.01, 0.3, 0.005).name('Slosh damping').onChange(() => changed('sloshDamping'));
   sim.add(state, 'autoShake').name('Auto shake (load test)').onChange(() => changed('autoShake'));
+
+  const iceF = gui.addFolder('Ice');
+  iceF.add(state, 'iceCount', 0, 6, 1).name('Cubes').onChange(() => changed('iceCount'));
+  iceF.add(state, 'iceSize', 1.6, 3.0, 0.05).name('Cube size cm').onChange(() => changed('iceSize'));
+  iceF.add(state, 'iceRound', 0, 1, 0.01).name('Melted (rounding)').onChange(() => changed('iceRound'));
+  iceF.add(state, 'iceCloud', 0, 1, 0.01).name('Cloudiness').onChange(() => changed('iceCloud'));
+  iceF.add({ drop: () => apply.dropIce?.() }, 'drop').name('Drop fresh ice');
 
   const look = gui.addFolder('Look');
   look.add(state, 'exposure', 0.3, 3, 0.01).name('Exposure').onChange(() => changed('exposure'));
