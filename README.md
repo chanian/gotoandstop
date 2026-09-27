@@ -1,5 +1,7 @@
 # gotoAndStop
 
+20+ years ago gotoAndStop was my personal homepage where I would regularly post explorations of code, graphics and personal musings. I would regularly share unpolished, fun experiments. This was probably my peak enjoyment level of code. Let's try to do this all again, this time with my buddy claude. Enjoy.
+
 A notebook of small interactive experiments, named after `gotoAndStop()` from the Flash days.
 Each experiment lives in its own folder with its own `index.html`, and GitHub Pages serves them all.
 
