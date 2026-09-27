@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>gotoAndStop</title>
+  <meta name="description" content="A notebook of small interactive experiments.">
+  <meta property="og:title" content="gotoAndStop">
+  <meta property="og:description" content="A notebook of small interactive experiments.">
+  <meta property="og:image" content="caustics/thumb.jpg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0c0b0a;
+      --panel: #151311;
+      --line: #2a2522;
+      --text: #ece4da;
+      --muted: #8f857a;
+      --accent: #ff9f43;
+      --key: #e8e1d8;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--bg); color: var(--text); }
+    body { font: 15px/1.6 Inter, system-ui, sans-serif; min-height: 100vh; }
+    a { color: inherit; }
+    .wrap { max-width: 1040px; margin: 0 auto; padding: 56px 24px 80px; }
+
+    header h1 {
+      font: 600 clamp(30px, 6vw, 52px)/1.05 'JetBrains Mono', ui-monospace, monospace;
+      letter-spacing: -0.02em; margin: 0;
+    }
+    header h1 .paren { color: var(--muted); }
+    header h1 .arg { color: var(--accent); }
+    header p { color: var(--muted); max-width: 560px; margin: 14px 0 0; }
+
+    /* a Flash-style timeline: one cell per frame, keyframes for experiments */
+    .timeline {
+      margin: 40px 0 36px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden;
+      background: var(--panel); font: 11px 'JetBrains Mono', monospace; color: var(--muted);
+    }
+    .ruler, .track { display: grid; grid-template-columns: repeat(var(--cells), minmax(0, 1fr)); }
+    .ruler div { padding: 4px 0 3px 4px; border-right: 1px solid var(--line); height: 22px; }
+    .ruler div:nth-child(5n) { color: var(--text); }
+    .track { border-top: 1px solid var(--line); }
+    .track span { height: 26px; border-right: 1px solid var(--line); position: relative; }
+    .track span:nth-child(5n) { background: rgba(255, 255, 255, 0.025); }
+    .track a.key { height: 26px; border-right: 1px solid var(--line); position: relative; background: rgba(255, 159, 67, 0.12); }
+    .track a.key::after {
+      content: ''; position: absolute; left: 50%; top: 50%; width: 8px; height: 8px; margin: -4px 0 0 -4px;
+      border-radius: 50%; background: var(--key);
+    }
+    .track a.key:hover { background: rgba(255, 159, 67, 0.3); }
+    .playhead { position: relative; height: 0; }
+    .playhead::before {
+      content: ''; position: absolute; top: -49px; height: 49px; width: 1px; left: calc(var(--at) * 100%);
+      background: var(--accent); box-shadow: 0 0 6px var(--accent);
+    }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 20px; }
+    .card {
+      display: block; text-decoration: none; background: var(--panel); border: 1px solid var(--line);
+      border-radius: 8px; overflow: hidden; transition: border-color .2s, transform .2s;
+    }
+    .card:hover { border-color: #4a3f36; transform: translateY(-2px); }
+    .card img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #000; }
+    .card .body { padding: 14px 16px 16px; }
+    .card .frame { font: 11px 'JetBrains Mono', monospace; color: var(--accent); letter-spacing: .04em; }
+    .card h2 { font-size: 17px; font-weight: 500; margin: 4px 0 6px; }
+    .card p { margin: 0; color: var(--muted); font-size: 14px; }
+    .tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
+    .tags span {
+      font: 11px 'JetBrains Mono', monospace; color: var(--muted); border: 1px solid var(--line);
+      border-radius: 99px; padding: 1px 8px;
+    }
+    .soon { border-style: dashed; display: grid; place-items: center; min-height: 200px; color: var(--muted);
+      font: 12px 'JetBrains Mono', monospace; }
+    footer { margin-top: 56px; color: var(--muted); font-size: 13px; }
+    footer code { font-family: 'JetBrains Mono', monospace; color: var(--text); }
+
+    @media (max-width: 560px) {
+      .wrap { padding-top: 36px; }
+      .ruler div:not(:nth-child(5n)) { color: transparent; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>gotoAndStop<span class="paren">(</span><span class="arg">1</span><span class="paren">);</span></h1>
+      <p>A notebook of small interactive experiments. Each one is a frame on the timeline, and each one runs in the browser.</p>
+    </header>
+
+    <nav class="timeline" style="--cells: 30" aria-label="Experiments timeline">
+      <div class="ruler" id="ruler"></div>
+      <div class="track" id="track"></div>
+      <div class="playhead" style="--at: 0.0167"></div>
+    </nav>
+
+    <main class="grid" id="grid">
+      <a class="card" href="caustics/" data-frame="1">
+        <img src="caustics/thumb.jpg" alt="A tumbler of whiskey on a walnut desk, throwing an orange caustic onto the wood" loading="lazy">
+        <div class="body">
+          <div class="frame">frame 01</div>
+          <h2>Whiskey Caustics</h2>
+          <p>The whiskey glass from <em>Final Fantasy: The Spirits Within</em>. Pick it up, shake it, and watch the light swirl on the desk.</p>
+          <div class="tags"><span>webgl</span><span>ray tracing</span><span>caustics</span><span>fluid sim</span></div>
+        </div>
+      </a>
+      <div class="card soon">frame 02 · empty</div>
+    </main>
+
+    <footer>
+      Named after <code>gotoAndStop()</code>, the Flash call that jumped the timeline to a frame and held it there.
+      Source on <a href="https://github.com/chanian/gotoandstop">GitHub</a>.
+    </footer>
+  </div>
+
+  <script>
+    // build the timeline from the cards: every card with data-frame becomes a keyframe
+    const cells = 30;
+    const ruler = document.getElementById('ruler');
+    const track = document.getElementById('track');
+    const frames = new Map([...document.querySelectorAll('.card[data-frame]')].map((c) => [+c.dataset.frame, c]));
+    for (let i = 1; i <= cells; i++) {
+      const r = document.createElement('div');
+      r.textContent = i === 1 || i % 5 === 0 ? i : '';
+      ruler.appendChild(r);
+      const card = frames.get(i);
+      let cell;
+      if (card) {
+        cell = document.createElement('a');
+        cell.className = 'key';
+        cell.href = card.getAttribute('href');
+        cell.title = `frame ${i}: ${card.querySelector('h2').textContent}`;
+      } else {
+        cell = document.createElement('span');
+      }
+      track.appendChild(cell);
+    }
+  </script>
+</body>
+</html>

@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Whiskey Caustics</title>
+  <meta name="description" content="The whiskey glass from Final Fantasy: The Spirits Within, with real-time caustics. Pick it up and shake it.">
+  <meta property="og:image" content="thumb.jpg">
+  <style>
+    html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+    canvas { display: block; touch-action: none; cursor: grab; }
+    canvas.holding { cursor: grabbing; }
+    #hint {
+      position: fixed; left: 0; right: 0; bottom: 22px; text-align: center;
+      font: 12px/1.4 ui-sans-serif, system-ui, sans-serif; letter-spacing: .14em; text-transform: lowercase;
+      color: rgba(255, 214, 170, .42); pointer-events: none; transition: opacity 2s;
+    }
+    #stats {
+      position: fixed; left: 12px; top: 12px; padding: 8px 10px; border-radius: 6px;
+      font: 11px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; color: #e8d6c0;
+      background: rgba(12, 9, 7, .72); pointer-events: none; white-space: pre; z-index: 10;
+    }
+    #stats b { color: #ffb86b; font-weight: 600; }
+    #stats .dim { color: rgba(232, 214, 192, .5); }
+    .lil-gui.root, .lil-gui.root .lil-gui { --background-color: rgba(14, 11, 9, .9); --widget-color: #2c2520; --hover-color: #3a302a;
+      --focus-color: #463a32; --number-color: #ffb86b; --string-color: #e8c9a0; --title-background-color: #1e1814; }
+    .lil-gui.root .lil-gui { --background-color: transparent; }
+    #back {
+      position: fixed; left: 14px; bottom: 16px; z-index: 10; text-decoration: none;
+      font: 11px/1 ui-monospace, SFMono-Regular, Menlo, monospace; color: rgba(255, 214, 170, .45);
+    }
+    #back:hover { color: rgba(255, 214, 170, .9); }
+    .hidden-ui #back,
+    .hidden-ui #stats, .hidden-ui .lil-gui.root { display: none; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+        "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.20.0/dist/lil-gui.esm.min.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="stats"></div>
+  <a id="back" href="../">&larr; gotoAndStop</a>
+  <div id="hint">pick up the glass &middot; shake it to swirl the whiskey</div>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
