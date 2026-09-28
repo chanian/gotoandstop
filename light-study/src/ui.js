@@ -4,8 +4,8 @@
 const PRESETS = [
   { id: 'night', label: 'Night', hours: 23.0 },
   { id: 'am', label: 'Golden AM', hours: 5.85 },
-  { id: 'day', label: 'Day', hours: 12.5 },
-  { id: 'pm', label: 'Golden PM', hours: 18.4 },
+  { id: 'day', label: 'Day', hours: 13.0 },
+  { id: 'pm', label: 'Golden PM', hours: 18.2 },
 ];
 
 const COMPASS = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];

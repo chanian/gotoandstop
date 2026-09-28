@@ -10,7 +10,7 @@ Each experiment lives in its own folder with its own `index.html`, and GitHub Pa
 | # | Experiment | Live |
 | --- | --- | --- |
 | 01 | <img src="caustics/thumb.jpg" width="240" alt=""><br>[Whiskey Caustics](caustics/): the whiskey glass from *Final Fantasy: The Spirits Within*, with real-time caustics you can slosh around | [view](https://chanian.github.io/gotoandstop/caustics/) |
-| 02 | <img src="light-study/thumb.jpg" width="240" alt=""><br>[Light Study](light-study/): a warm living room lit by a real sun, with dials for time of day and window direction | [view](https://chanian.github.io/gotoandstop/light-study/) |
+| 02 | <img src="light-study/thumb.jpg" width="240" alt=""><br>[Light Study](light-study/): a desert villa living room, path traced in the browser, with dials for time of day and the direction the glass faces | [view](https://chanian.github.io/gotoandstop/light-study/) |
 
 ## Adding an experiment
 

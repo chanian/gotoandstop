@@ -1,308 +1,477 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
-import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import GUI from 'lil-gui';
-import { buildRoom, animateCurtains, animateFoliage, WINDOW, ROOM } from './room.js';
-import { sunPosition, moonPosition, lightingFor, phaseName, makeSky, smooth } from './sky.js';
-import { makeDust, makeShafts } from './effects.js';
+import { WebGLPathTracer, PhysicalSpotLight, DenoiseMaterial } from 'three-gpu-pathtracer';
+import { buildRoom, ROOM, GLASS } from './room.js';
+import { sunPosition, moonPosition, lightingFor, phaseName, SkyTextures, smooth } from './sky.js';
 import { createUI } from './ui.js';
+
+// "HDR window pull": compress highlights on luminance before AgX, the way architectural
+// photographers blend exposures so a dim interior and a bright desert both hold detail.
+THREE.ShaderChunk.tonemapping_pars_fragment = THREE.ShaderChunk.tonemapping_pars_fragment.replace(
+  'vec3 CustomToneMapping( vec3 color ) { return color; }',
+  `vec3 CustomToneMapping( vec3 color ) {
+    vec3 c = color * toneMappingExposure;
+    float l = dot( c, vec3( 0.2126, 0.7152, 0.0722 ) );
+    float lc = 0.26 * log( 1.0 + l / 0.26 );
+    c *= lc / max( l, 1e-5 );
+    return NeutralToneMapping( c / toneMappingExposure );
+  }`,
+);
 
 const params = new URLSearchParams(location.search);
 const state = {
-  hours: params.has('t') ? +params.get('t') : 18.4,
-  facing: params.has('face') ? +params.get('face') : 330,
+  hours: params.has('t') ? +params.get('t') : 15.2,
+  facing: params.has('face') ? +params.get('face') : 205,
   playing: false,
   timeAnim: null,
 };
-const opts = { ao: true, bloom: true, beams: true, dust: true, beamDensity: 0.1, wind: 0.6, shadowRes: 2048, pixelRatio: Math.min(devicePixelRatio, 2) };
+const opts = {
+  pathTrace: !params.has('raster'),
+  maxSamples: 800,
+  bounces: 6,
+  ptScale: params.has('ptscale') ? +params.get('ptscale') : Math.min(1, 1.25 / devicePixelRatio),
+  denoise: true,
+  ao: true,
+  bloom: true,
+  exposure: 0,
+  meshes: 'Off',
+};
 
-// ------------------------------------------------------------------ renderer / scene
+const statusEl = document.getElementById('status');
+const loadingEl = document.getElementById('loading');
+const setStatus = (html) => { if (statusEl.innerHTML !== html) statusEl.innerHTML = html; };
+
+// ------------------------------------------------------------------ renderer / camera
 
 const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: 'high-performance' });
-renderer.setPixelRatio(opts.pixelRatio);
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.setSize(innerWidth, innerHeight);
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMapping = THREE.CustomToneMapping;
 document.body.prepend(renderer.domElement);
 RectAreaLightUniformsLib.init();
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog(0xbcd4f5, 14, 70); // haze outside; the room is well inside the near distance
-const pmrem = new THREE.PMREMGenerator(renderer);
-scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-
-const camera = new THREE.PerspectiveCamera(52, innerWidth / innerHeight, 0.05, 200);
-camera.position.set(2.45, 1.38, 2.25);
+const camera = new THREE.PerspectiveCamera(50, innerWidth / innerHeight, 0.05, 20000);
+camera.position.set(0, 1.55, 4.3);
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.set(-0.7, 1.0, -1.1);
+controls.target.set(0, 1.55, -2.5);
 controls.enableDamping = true;
-controls.dampingFactor = 0.06;
+controls.dampingFactor = 0.08;
 controls.enablePan = false;
-controls.minDistance = 2.2;
-controls.maxDistance = 5.2;
-controls.minPolarAngle = 1.05;
-controls.maxPolarAngle = 1.72;
-controls.rotateSpeed = 0.45;
+controls.enableZoom = false;
+controls.rotateSpeed = 0.35;
 controls.update();
 const baseAz = controls.getAzimuthalAngle();
-controls.minAzimuthAngle = baseAz - 0.55;
-controls.maxAzimuthAngle = baseAz + 0.4;
+controls.minAzimuthAngle = baseAz - 0.3;
+controls.maxAzimuthAngle = baseAz + 0.3;
+controls.minPolarAngle = Math.PI / 2 - 0.08;
+controls.maxPolarAngle = Math.PI / 2 + 0.1;
+// debug: ?cam=x,y,z,tx,ty,tz frees the camera for close inspection
+if (params.has('cam')) {
+  const [x, y, z, tx, ty, tz] = params.get('cam').split(',').map(Number);
+  camera.position.set(x, y, z);
+  controls.target.set(tx, ty, tz);
+  controls.minAzimuthAngle = controls.minPolarAngle = -Infinity;
+  controls.maxAzimuthAngle = controls.maxPolarAngle = Infinity;
+  controls.update();
+}
 
-const room = buildRoom(scene);
-const sky = makeSky();
-scene.add(sky.mesh);
-const dust = makeDust();
-scene.add(dust.points);
-const shafts = makeShafts();
-scene.add(shafts.mesh);
+// Architectural framing: a level camera with the lens shifted so the horizon sits a third of the
+// way down (verticals stay vertical), matching the reference photo.
+const SHIFT = 0.19;
+function frameCamera() {
+  const w = innerWidth, h = innerHeight, aspect = w / h;
+  const hfov = 76 * THREE.MathUtils.DEG2RAD;
+  let vTan = Math.tan(hfov / 2) / aspect;
+  vTan = Math.max(vTan, Math.tan(24 * THREE.MathUtils.DEG2RAD));
+  const fullTan = vTan * (1 + 2 * SHIFT);
+  camera.fov = 2 * Math.atan(fullTan) * THREE.MathUtils.RAD2DEG;
+  camera.aspect = aspect;
+  const fullH = h * (1 + 2 * SHIFT);
+  camera.setViewOffset(w, fullH, 0, fullH - h, w, h);
+  camera.updateProjectionMatrix();
+}
 
-// ------------------------------------------------------------------ lights
+// ------------------------------------------------------------------ scene
 
-const sun = new THREE.DirectionalLight(0xffffff, 3);
+const sky = new SkyTextures(1024, 256);
+scene.background = sky.bg;
+scene.environment = sky.env;
+
+const sun = new THREE.DirectionalLight(0xffffff, 4);
 sun.castShadow = true;
-sun.shadow.mapSize.set(opts.shadowRes, opts.shadowRes);
-Object.assign(sun.shadow.camera, { left: -6.5, right: 6.5, top: 6.5, bottom: -6.5, near: 1, far: 45 });
-sun.shadow.bias = -0.0004;
-sun.shadow.normalBias = 0.02;
-sun.shadow.radius = 3;
-sun.target.position.set(-1, 1, 0);
+sun.shadow.mapSize.set(4096, 4096);
+Object.assign(sun.shadow.camera, { left: -15, right: 15, top: 15, bottom: -15, near: 1, far: 80 });
+sun.shadow.bias = -0.0003;
+sun.shadow.normalBias = 0.03;
+sun.target.position.set(0, 0, -4);
 scene.add(sun, sun.target);
 
-const hemi = new THREE.HemisphereLight(0xbcd4f5, 0x8a6a4f, 0.4);
+// fill light for the live preview only: the path tracer gets real bounce light instead
+const rasterOnly = [];
+const hemi = new THREE.HemisphereLight(0xdfe8f5, 0x8a7560, 0.4);
 scene.add(hemi);
+const opening = new THREE.RectAreaLight(0xffffff, 2, GLASS.x1 - GLASS.x0, GLASS.y1);
+opening.position.set((GLASS.x0 + GLASS.x1) / 2, GLASS.y1 / 2, ROOM.z0 - 0.3);
+opening.lookAt(opening.position.x, opening.position.y, 5);
+scene.add(opening);
+rasterOnly.push(opening);
 
-// soft skylight through the glass
-const windowLight = new THREE.RectAreaLight(0xffffff, 2, WINDOW.z1 - WINDOW.z0, WINDOW.y1 - WINDOW.y0);
-windowLight.position.set(WINDOW.x + 0.02, (WINDOW.y0 + WINDOW.y1) / 2, (WINDOW.z0 + WINDOW.z1) / 2);
-windowLight.lookAt(0, windowLight.position.y, windowLight.position.z);
-scene.add(windowLight);
+// photographer's fill: a big, dim, warm softbox behind the camera (path traced too)
+const fill = new THREE.RectAreaLight(0xfff0e0, 0.3, 4.5, 2.2);
+fill.position.set(0, 1.9, 6.35);
+fill.lookAt(0, 1.2, 0);
+scene.add(fill);
 
-// cheap bounce: warm light rising off the sunlit patch on the floor
-const bounce = new THREE.PointLight(0xffb070, 0, 0, 1.1);
-scene.add(bounce);
+const downlights = [];
+let room;
+let composer, gtao, bloom;
+let pathTracer = null;
 
-// lamps
-const warm = new THREE.Color(0xffa55c);
-const spot = new THREE.SpotLight(warm, 0, 5, 1.0, 0.7, 1.4);
-spot.position.copy(room.anchors.floorLamp).add(new THREE.Vector3(0, -0.14, 0));
-spot.target.position.copy(room.anchors.floorLamp).setY(0);
-spot.castShadow = true;
-spot.shadow.mapSize.set(1024, 1024);
-spot.shadow.bias = -0.0008;
-spot.shadow.normalBias = 0.02;
-scene.add(spot, spot.target);
-const glow = new THREE.PointLight(warm, 0, 6, 1.4);
-glow.position.copy(room.anchors.floorLamp).add(new THREE.Vector3(0, 0.06, 0));
-scene.add(glow);
-const tableLamp = new THREE.PointLight(warm, 0, 5, 1.5);
-tableLamp.position.copy(room.anchors.tableLamp);
-scene.add(tableLamp);
-const candle = new THREE.PointLight(0xff9a45, 0, 3, 1.6);
-candle.position.copy(room.anchors.candle);
-scene.add(candle);
-
-// ------------------------------------------------------------------ post
-
-const composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(innerWidth * opts.pixelRatio, innerHeight * opts.pixelRatio, { type: THREE.HalfFloatType, samples: 4 }));
-composer.addPass(new RenderPass(scene, camera));
-const gtao = new GTAOPass(scene, camera, innerWidth, innerHeight);
-gtao.updateGtaoMaterial({ radius: 0.45, distanceExponent: 1.4, thickness: 1.2, scale: 1.1, samples: 16 });
-gtao.blendIntensity = 0.9;
-// keep the see-through things out of the AO normal/depth pass
-const aoHidden = [sky.mesh, shafts.mesh, ...room.curtains.map((c) => c.mesh)];
-const gtaoRender = gtao.render.bind(gtao);
-gtao.render = (...args) => {
-  const vis = aoHidden.map((o) => o.visible);
-  aoHidden.forEach((o) => { o.visible = false; });
-  gtaoRender(...args);
-  aoHidden.forEach((o, i) => { o.visible = vis[i]; });
-};
-composer.addPass(gtao);
-const bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.22, 0.65, 0.9);
-composer.addPass(bloom);
-composer.addPass(new OutputPass());
-const finish = new ShaderPass({
-  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 }, uAspect: { value: 1 } },
-  vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
-  fragmentShader: /* glsl */ `
-    uniform sampler2D tDiffuse; uniform float uTime, uAspect; varying vec2 vUv;
-    float h(vec2 p) { vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
-    void main() {
-      vec4 c = texture2D(tDiffuse, vUv);
-      vec2 q = (vUv - 0.5) * vec2(uAspect, 1.0);
-      c.rgb *= mix(0.72, 1.0, smoothstep(1.1, 0.35, length(q)));
-      c.rgb += (h(gl_FragCoord.xy + fract(uTime * 7.3) * 400.0) - 0.5) * 0.018;
-      gl_FragColor = c;
-    }
-  `,
-});
-composer.addPass(finish);
+function buildPost() {
+  composer = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, samples: 4 }));
+  composer.addPass(new RenderPass(scene, camera));
+  gtao = new GTAOPass(scene, camera, innerWidth, innerHeight);
+  gtao.updateGtaoMaterial({ radius: 0.6, distanceExponent: 1.5, thickness: 1.4, scale: 1.2, samples: 16 });
+  gtao.blendIntensity = 1.0;
+  composer.addPass(gtao);
+  bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.12, 0.7, 1.4);
+  composer.addPass(bloom);
+  composer.addPass(new OutputPass());
+}
 
 function resize() {
   const w = innerWidth, h = innerHeight;
-  camera.aspect = w / h;
-  camera.fov = w / h < 1 ? 70 : 52;
-  camera.updateProjectionMatrix();
   renderer.setSize(w, h);
-  composer.setPixelRatio(renderer.getPixelRatio());
-  composer.setSize(w, h);
-  gtao.setSize(w, h);
-  bloom.setSize(w, h);
-  finish.uniforms.uAspect.value = w / h;
-  dust.uniforms.uScale.value = h * renderer.getPixelRatio() * 0.006;
+  frameCamera();
+  if (composer) {
+    composer.setPixelRatio(renderer.getPixelRatio());
+    composer.setSize(w, h);
+    gtao.setSize(w, h);
+    bloom.setSize(w, h);
+  }
+  if (pathTracer) dirty();
 }
 addEventListener('resize', resize);
-resize();
 
-// ------------------------------------------------------------------ settings
+// ------------------------------------------------------------------ lighting state
 
-const gui = new GUI({ title: 'Extras' });
-gui.add(opts, 'wind', 0, 1.5, 0.01).name('Breeze');
-gui.add(opts, 'beams').name('Light beams').onChange((v) => { shafts.mesh.visible = v; });
-gui.add(opts, 'beamDensity', 0, 0.2, 0.005).name('Beam haze');
-gui.add(opts, 'dust').name('Dust motes').onChange((v) => { dust.points.visible = v; });
-gui.add(opts, 'ao').name('Ambient occlusion').onChange((v) => { gtao.enabled = v; });
-gui.add(opts, 'bloom').name('Bloom').onChange((v) => { bloom.enabled = v; });
-gui.add(opts, 'shadowRes', [1024, 2048, 4096]).name('Sun shadow res').onChange((v) => {
-  sun.shadow.mapSize.set(v, v);
-  sun.shadow.map?.dispose();
-  sun.shadow.map = null;
-});
-gui.add(opts, 'pixelRatio', 0.5, Math.max(2, devicePixelRatio), 0.25).name('Pixel ratio').onChange((v) => { renderer.setPixelRatio(v); resize(); });
-gui.close();
+const L = { zenith: new THREE.Color(), horizon: new THREE.Color(), sunColor: new THREE.Color(), haze: new THREE.Color() };
+const sunDir = new THREE.Vector3(), moonDir = new THREE.Vector3(), lightDir = new THREE.Vector3();
+const moonColor = new THREE.Color(0x8ea4ff);
+const ground = new THREE.Color();
+const groundTint = new THREE.Color(0.55, 0.45, 0.36);
+let lastSky = '';
+let skyTimer = 0;
+let current = { el: 0, azimuth: 0 };
+let interacting = true;
+let idleTimer = 0;
+const pathTracing = () => opts.pathTrace && pathTracer && !interacting && opts.meshes === 'Off';
+
+function applyLighting(forceSky = false) {
+  const sp = sunPosition(state.hours, state.facing, sunDir);
+  const el = sp.elevation;
+  current = { el, azimuth: sp.azimuth };
+  lightingFor(el, L);
+  const moon = moonPosition(sp.azimuth, state.facing, moonDir);
+  const moonI = 0.2 * L.night;
+  if (L.sunIntensity > 0.001 || moonI < 0.001) {
+    lightDir.copy(sunDir);
+    sun.color.copy(L.sunColor);
+    sun.intensity = L.sunIntensity;
+  } else {
+    lightDir.copy(moon.dir);
+    sun.color.copy(moonColor);
+    sun.intensity = moonI;
+  }
+  sun.position.copy(sun.target.position).addScaledVector(lightDir, 40);
+  sun.visible = sun.intensity > 0.0005;
+
+  // sky textures: regenerated when the sun moves, throttled while dragging
+  const key = `${state.hours.toFixed(2)}|${state.facing}`;
+  if (key !== lastSky && (forceSky || skyTimer <= 0)) {
+    lastSky = key;
+    skyTimer = 0.1;
+    ground.copy(L.haze).multiply(groundTint);
+    sky.update({ zenith: L.zenith, horizon: L.horizon, sunColor: L.sunColor, sunDir, sunVis: smooth(-3, 1, el), ground, night: L.night, moonDir, intensity: 1.4 });
+  }
+  scene.environmentIntensity = L.skyIntensity * (pathTracing() ? 1 : 0.14);
+  scene.backgroundIntensity = L.skyIntensity;
+
+  hemi.color.copy(L.horizon).lerp(L.zenith, 0.4);
+  hemi.intensity = 0.01 + 0.07 * L.day;
+  opening.color.copy(L.horizon).lerp(L.zenith, 0.3);
+  opening.intensity = 0.02 + 0.45 * L.day;
+  fill.intensity = 0.02 + 0.55 * L.day;
+
+  for (const m of room.tinted) m.color.copy(L.haze);
+  room.mountainMat.emissive.copy(L.horizon);
+  room.mountainMat.emissiveIntensity = 0.55 * L.skyIntensity;
+  for (const d of downlights) d.intensity = L.lamps * 14;
+  room.materials.trimMat.emissiveIntensity = L.lamps * 3;
+  renderer.toneMappingExposure = L.exposure * Math.pow(2, opts.exposure);
+}
+
+// ------------------------------------------------------------------ path tracing
+
+// Any change: show the live preview now, restart path tracing once things settle.
+function dirty() {
+  interacting = true;
+  idleTimer = 0.35;
+  if (pathTracer) pathTracer.enablePathTracing = false;
+}
+
+function syncPathTracer() {
+  applyLighting(true);
+  rasterOnly.forEach((l) => { l.visible = false; });
+  pathTracer.updateLights();
+  rasterOnly.forEach((l) => { l.visible = true; });
+  pathTracer.updateEnvironment();
+  pathTracer.updateMaterials();
+  pathTracer.updateCamera();
+  pathTracer.reset();
+  pathTracer.enablePathTracing = true;
+  pathTracer.pausePathTracing = false;
+}
+
+// The path tracer computes tangents from UVs when a mesh has none, and degenerate UVs (bevels,
+// poles) give NaNs that turn whole surfaces black. Provide safe tangents up front.
+function prepareTangents() {
+  scene.traverse((o) => {
+    if (!o.isMesh || o.geometry.attributes.tangent) return;
+    const g = o.geometry;
+    const count = g.attributes.position.count;
+    const needs = o.material.normalMap && g.attributes.uv && g.attributes.normal && g.index;
+    if (needs) {
+      g.computeTangents();
+      const t = g.attributes.tangent.array;
+      for (let i = 0; i < t.length; i += 4) {
+        if (!Number.isFinite(t[i]) || !Number.isFinite(t[i + 1]) || !Number.isFinite(t[i + 2]) || (t[i] === 0 && t[i + 1] === 0 && t[i + 2] === 0)) {
+          t[i] = 1; t[i + 1] = 0; t[i + 2] = 0; t[i + 3] = 1;
+        }
+      }
+    } else {
+      const t = new Float32Array(count * 4);
+      for (let i = 0; i < count; i++) { t[i * 4] = 1; t[i * 4 + 3] = 1; }
+      g.setAttribute('tangent', new THREE.BufferAttribute(t, 4));
+    }
+  });
+}
+
+function initPathTracer() {
+  prepareTangents();
+  pathTracer = new WebGLPathTracer(renderer);
+  pathTracer.bounces = opts.bounces;
+  pathTracer.filterGlossyFactor = 0.6;
+  pathTracer.tiles.set(2, 2);
+  pathTracer.minSamples = 3;
+  pathTracer.fadeDuration = 700;
+  pathTracer.renderDelay = 0;
+  pathTracer.renderScale = opts.ptScale;
+  pathTracer.rasterizeScene = true;
+  pathTracer.rasterizeSceneCallback = () => composer.render();
+  // smart denoise, strong at first and relaxing as samples accumulate
+  const denoise = new DenoiseMaterial({ transparent: true, premultipliedAlpha: renderer.getContextAttributes().premultipliedAlpha });
+  pathTracer.renderToCanvasCallback = (target, r, q) => {
+    const plain = q.material;
+    if (opts.denoise) {
+      denoise.map = plain.map;
+      denoise.opacity = plain.opacity;
+      denoise.blending = plain.blending;
+      const s = pathTracer.samples;
+      denoise.sigma = Math.max(0.7, 4.2 - Math.log2(1 + s) * 0.48);
+      denoise.threshold = s < 128 ? 0.12 : 0.08;
+      denoise.kSigma = 1.2;
+      q.material = denoise;
+    }
+    const ac = r.autoClear;
+    r.autoClear = false;
+    q.render(r);
+    r.autoClear = ac;
+    q.material = plain;
+  };
+  rasterOnly.forEach((l) => { l.visible = false; });
+  pathTracer.setScene(scene, camera);
+  rasterOnly.forEach((l) => { l.visible = true; });
+  pathTracer.enablePathTracing = false;
+}
 
 // ------------------------------------------------------------------ UI
 
 const ui = createUI(state, {
   onPreset(target) {
     const from = state.hours;
-    let diff = (((target - from) % 24) + 36) % 24 - 12; // shortest way around the clock
+    const diff = (((target - from) % 24) + 36) % 24 - 12;
     state.timeAnim = { from, diff, t: 0, dur: 1.2 + Math.abs(diff) * 0.22 };
   },
 });
+controls.addEventListener('change', () => dirty());
+
+const gui = new GUI({ title: 'Render' });
+gui.add(opts, 'pathTrace').name('Photoreal (path traced)').onChange(() => dirty());
+gui.add(opts, 'maxSamples', [128, 256, 512, 800, 1500, 3000]).name('Samples').onChange(() => { if (pathTracer) pathTracer.pausePathTracing = false; });
+gui.add(opts, 'ptScale', 0.25, 1, 0.05).name('Path trace resolution').onChange((v) => { if (pathTracer) pathTracer.renderScale = v; dirty(); });
+gui.add(opts, 'bounces', 2, 12, 1).name('Light bounces').onChange((v) => { if (pathTracer) pathTracer.bounces = v; dirty(); });
+gui.add(opts, 'denoise').name('Denoise');
+gui.add(opts, 'exposure', -2, 2, 0.05).name('Exposure (stops)').onChange(() => dirty());
+gui.add(opts, 'ao').name('Preview AO').onChange((v) => { gtao.enabled = v; });
+gui.add(opts, 'bloom').name('Preview bloom').onChange((v) => { bloom.enabled = v; });
+gui.add(opts, 'meshes', ['Off', 'Overlay', 'Wireframe']).name('Show meshes').onChange(setMeshView);
+gui.close();
+
+// ------------------------------------------------------------------ mesh view
+// Wireframes are a raster-only view: the path tracer only sees triangles as surfaces.
+
+let wires = null;
+let triangleCount = 0;
+const clay = new THREE.MeshBasicMaterial({ color: 0x17130f, polygonOffset: true, polygonOffsetFactor: 1, polygonOffsetUnits: 1 });
+const wireBg = new THREE.Color(0x0d0a08);
+
+function meshes() {
+  const list = [];
+  scene.traverse((o) => { if (o.isMesh && o.visible) list.push(o); });
+  return list;
+}
+
+// Overlay: wireframe over the shaded scene. Wireframe: hidden-line view, surfaces drawn solid dark
+// with each mesh's triangles in its own colour.
+function setMeshView(mode) {
+  if (mode !== 'Off' && !wires) {
+    wires = meshes().map((m, i) => {
+      const col = new THREE.Color().setHSL((i * 0.618) % 1, 0.55, 0.62);
+      const l = new THREE.LineSegments(new THREE.WireframeGeometry(m.geometry), new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.38, depthWrite: false }));
+      l.raycast = () => {};
+      l.userData.mesh = m;
+      m.add(l);
+      return l;
+    });
+  }
+  const on = mode !== 'Off';
+  for (const l of wires || []) {
+    l.visible = on;
+    const m = l.userData.mesh;
+    if (mode === 'Wireframe') {
+      if (!m.userData.shaded) m.userData.shaded = m.material;
+      m.material = clay;
+    } else if (m.userData.shaded) {
+      m.material = m.userData.shaded;
+      delete m.userData.shaded;
+    }
+    // push surfaces back a hair so the lines don't z-fight
+    for (const mat of [].concat(m.material)) {
+      const want = mode === 'Overlay' || mat === clay;
+      if (mat.polygonOffset !== want) {
+        mat.polygonOffset = want;
+        mat.polygonOffsetFactor = 1;
+        mat.polygonOffsetUnits = 1;
+        mat.needsUpdate = true;
+      }
+    }
+  }
+  scene.background = mode === 'Wireframe' ? wireBg : sky.bg;
+  gtao.enabled = opts.ao && mode === 'Off';
+  bloom.enabled = opts.bloom && mode !== 'Wireframe';
+  dirty();
+}
 
 // ------------------------------------------------------------------ frame
 
-const L = { zenith: new THREE.Color(), horizon: new THREE.Color(), sunColor: new THREE.Color() };
-const sunDir = new THREE.Vector3(), moonDir = new THREE.Vector3(), lightDir = new THREE.Vector3();
-const moonColor = new THREE.Color(0x9fb4ff);
-const lightColor = new THREE.Color();
-const floorTint = new THREE.Color(0xd9a878);
-const tmpC = new THREE.Color();
-const winCenter = new THREE.Vector3(WINDOW.x, (WINDOW.y0 + WINDOW.y1) / 2, (WINDOW.z0 + WINDOW.z1) / 2);
 const clock = new THREE.Clock();
 const ease = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
+let lastUI = '';
 
 function frame() {
   const dt = Math.min(clock.getDelta(), 1 / 20);
-  const t = clock.elapsedTime;
+  skyTimer -= dt;
 
   if (state.timeAnim) {
     const a = state.timeAnim;
     a.t += dt / a.dur;
-    const k = ease(Math.min(a.t, 1));
-    state.hours = (((a.from + a.diff * k) % 24) + 24) % 24;
+    state.hours = (((a.from + a.diff * ease(Math.min(a.t, 1))) % 24) + 24) % 24;
     if (a.t >= 1) state.timeAnim = null;
   } else if (state.playing) {
-    state.hours = (state.hours + dt * (24 / 70)) % 24; // a day in 70 s
+    state.hours = (state.hours + dt * (24 / 70)) % 24;
   }
-
-  const sp = sunPosition(state.hours, state.facing, sunDir);
-  const el = sp.elevation;
-  lightingFor(el, L);
-
-  // one directional light: the sun, handing over to the moon after dusk
-  const moon = moonPosition(sp.azimuth, state.facing, moonDir);
-  const sunI = L.sunIntensity;
-  const moonI = 0.28 * L.night;
-  if (sunI > 0.001 || moonI < 0.001) {
-    lightDir.copy(sunDir);
-    lightColor.copy(L.sunColor);
-    sun.intensity = sunI;
-  } else {
-    lightDir.copy(moon.dir);
-    lightColor.copy(moonColor);
-    sun.intensity = moonI;
-  }
-  sun.color.copy(lightColor);
-  sun.position.copy(sun.target.position).addScaledVector(lightDir, 22);
-  const beamStrength = sun.intensity * smooth(-0.02, -0.15, lightDir.x) * (lightDir.y > 0 ? 1 : 0);
-
-  hemi.color.copy(L.horizon).lerp(L.zenith, 0.4);
-  hemi.groundColor.copy(floorTint).multiplyScalar(0.5);
-  hemi.intensity = 0.04 + L.day * 0.38;
-  windowLight.color.copy(L.horizon).lerp(L.zenith, 0.55);
-  windowLight.intensity = 0.12 + L.day * 3.0 + (1 - L.day) * (1 - L.night) * 1.2;
-
-  // bounce from wherever the beam lands on the floor
-  if (lightDir.y > 0.02) {
-    const D = lightDir;
-    const tt = winCenter.y / D.y;
-    bounce.position.set(
-      THREE.MathUtils.clamp(winCenter.x - D.x * tt, ROOM.x0 + 0.3, ROOM.x1 - 0.3), 0.3,
-      THREE.MathUtils.clamp(winCenter.z - D.z * tt, ROOM.z0 + 0.3, ROOM.z1 - 0.3));
-  }
-  bounce.color.copy(lightColor).multiply(floorTint);
-  bounce.intensity = beamStrength * 0.55;
-
-  // lamps + candle
-  const lamps = L.lamps;
-  const flicker = 0.82 + 0.1 * Math.sin(t * 13.1) * Math.sin(t * 7.7 + 1.3) + 0.08 * Math.sin(t * 23.3);
-  spot.intensity = lamps * 10;
-  glow.intensity = lamps * 1.4;
-  tableLamp.intensity = lamps * 1.3;
-  candle.intensity = lamps * 0.5 * flicker;
-  room.flame.material.opacity = lamps;
-  room.flame.scale.set(1, 2.2 + flicker * 0.4, 1);
-  room.emissive.shades.emissiveIntensity = lamps * 1.6;
-
-  // sheers glow with the light behind them
-  const backlit = beamStrength * 0.35;
-  room.emissive.curtains.emissive.copy(tmpC.copy(L.horizon).lerp(L.zenith, 0.3).multiplyScalar(0.5 + L.day)).add(lightColor.clone().multiplyScalar(backlit));
-  room.emissive.curtains.emissiveIntensity = 0.1 + 0.5 * L.day + 0.05 * lamps;
-
-  scene.environmentIntensity = 0.04 + 0.32 * L.day + 0.05 * lamps;
-  renderer.toneMappingExposure = L.exposure;
-
-  scene.fog.color.copy(L.horizon).lerp(L.zenith, 0.25);
-
-  // sky
-  sky.uniforms.uZenith.value.copy(L.zenith);
-  sky.uniforms.uHorizon.value.copy(L.horizon);
-  sky.uniforms.uSunDir.value.copy(sunDir);
-  sky.uniforms.uSunColor.value.copy(L.sunColor);
-  sky.uniforms.uSunVis.value = smooth(-3, 1, el);
-  sky.uniforms.uMoonDir.value.copy(moonDir);
-  sky.uniforms.uNight.value = L.night;
-  sky.uniforms.uTime.value = t;
-  sky.uniforms.uBright.value = 1.6 + L.day * 1.2;
-
-  // beams + dust follow whichever light is shining in
-  shafts.update(lightDir);
-  shafts.uniforms.uSunDir.value.copy(lightDir);
-  shafts.uniforms.uColor.value.copy(lightColor).multiplyScalar(beamStrength);
-  shafts.uniforms.uDensity.value = opts.beamDensity * (0.35 + 0.9 * (1 - smooth(6, 40, el))); // beams read best in low sun
-  shafts.uniforms.uTime.value = t;
-  shafts.uniforms.uFrame.value = (shafts.uniforms.uFrame.value + 1) % 64;
-  dust.uniforms.uSunDir.value.copy(lightDir);
-  dust.uniforms.uColor.value.copy(lightColor).lerp(tmpC.setRGB(1, 1, 1), 0.35).multiplyScalar(beamStrength * 0.22);
-  dust.uniforms.uTime.value = t;
-
-  animateCurtains(room.curtains, t, opts.wind);
-  animateFoliage(room.foliage, t, opts.wind);
-  finish.uniforms.uTime.value = t;
+  const uiKey = `${state.hours}|${state.facing}`;
+  if (uiKey !== lastUI) { lastUI = uiKey; dirty(); }
 
   controls.update();
-  ui.update({ hours: state.hours, facing: state.facing, sunAzimuth: sp.azimuth, elevation: el, phase: phaseName(state.hours, el) });
-  composer.render();
+
+  if (interacting) {
+    idleTimer -= dt;
+    applyLighting();
+    if (idleTimer <= 0 && !state.timeAnim && !state.playing) {
+      interacting = false;
+      if (opts.pathTrace && pathTracer) syncPathTracer();
+      else applyLighting(true);
+    }
+  }
+
+  ui.update({ hours: state.hours, facing: state.facing, sunAzimuth: current.azimuth, elevation: current.el, phase: phaseName(state.hours, current.el) });
+
+  if (pathTracing()) {
+    if (pathTracer.samples >= opts.maxSamples) pathTracer.pausePathTracing = true;
+    pathTracer.renderSample();
+    const s = Math.floor(pathTracer.samples);
+    const done = pathTracer.pausePathTracing;
+    const pct = Math.min(100, (s / opts.maxSamples) * 100).toFixed(0);
+    setStatus(`<span class="dot ${done ? 'done' : 'on'}"></span>${done ? 'Photoreal' : 'Path tracing'} · ${s} samples<i style="width:${pct}%"></i>`);
+  } else if (opts.meshes !== 'Off') {
+    composer.render();
+    setStatus(`<span class="dot"></span>Mesh view · ${(triangleCount / 1e6).toFixed(2)}M triangles`);
+  } else {
+    composer.render();
+    setStatus(`<span class="dot"></span>${pathTracer || !opts.pathTrace ? 'Live preview' : 'Preparing path tracer…'}${opts.pathTrace && pathTracer ? ' · let go to render' : ''}`);
+  }
   requestAnimationFrame(frame);
 }
-requestAnimationFrame(frame);
+
+// ------------------------------------------------------------------ boot
+
+function boot() {
+  room = buildRoom(scene);
+  for (const a of room.lampAnchors) {
+    const s = new PhysicalSpotLight(0xffc68a, 0);
+    s.position.copy(a);
+    s.target.position.set(a.x, 0, a.z);
+    s.angle = 0.62;
+    s.penumbra = 0.6;
+    s.decay = 2;
+    s.radius = 0.035;
+    s.distance = 0;
+    scene.add(s, s.target);
+    downlights.push(s);
+  }
+  buildPost();
+  for (const m of meshes()) {
+    const g = m.geometry;
+    triangleCount += (g.index ? g.index.count : g.attributes.position.count) / 3;
+  }
+  resize();
+  applyLighting(true);
+  composer.render();
+  loadingEl.classList.add('gone');
+  requestAnimationFrame(frame);
+  if (opts.pathTrace) {
+    setTimeout(() => {
+      try {
+        initPathTracer();
+        dirty();
+      } catch (e) {
+        console.error(e);
+        opts.pathTrace = false;
+        gui.controllersRecursive().forEach((c) => c.updateDisplay());
+      }
+    }, 300);
+  }
+}
+requestAnimationFrame(() => setTimeout(boot, 30));

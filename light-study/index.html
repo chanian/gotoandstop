@@ -4,9 +4,9 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Light Study</title>
-  <meta name="description" content="A warm living room lit by the sun, in real time. Turn the dials to change the time of day and the direction the window faces.">
+  <meta name="description" content="A desert villa living room, path traced in the browser. Turn the dials to change the time of day and the direction the glass wall faces.">
   <meta property="og:title" content="Light Study">
-  <meta property="og:description" content="A warm living room lit by the sun, in real time. Turn the dials to change the time of day and the direction the window faces.">
+  <meta property="og:description" content="A desert villa living room, path traced in the browser. Turn the dials to change the time of day and the direction the glass wall faces.">
   <meta property="og:image" content="https://chanian.github.io/gotoandstop/light-study/thumb.jpg">
   <meta property="og:url" content="https://chanian.github.io/gotoandstop/light-study/">
   <meta name="twitter:card" content="summary_large_image">
@@ -102,11 +102,29 @@
     .play span { width: 0; height: 0; border-left: 8px solid currentColor; border-top: 5px solid transparent; border-bottom: 5px solid transparent; }
     .play.on span { width: 8px; height: 10px; border: 0; border-left: 3px solid currentColor; border-right: 3px solid currentColor; box-sizing: border-box; }
 
+    #status {
+      position: fixed; right: 20px; bottom: 22px; z-index: 5; overflow: hidden;
+      display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 999px;
+      background: var(--panel); border: 1px solid var(--line); font-size: 12px; color: var(--muted);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); font-variant-numeric: tabular-nums;
+    }
+    #status .dot { width: 7px; height: 7px; border-radius: 50%; background: rgba(244, 233, 220, .35); }
+    #status .dot.on { background: var(--accent); box-shadow: 0 0 8px var(--accent); animation: pulse 1.2s infinite; }
+    #status .dot.done { background: #9fd49a; }
+    #status i { position: absolute; left: 0; bottom: 0; height: 2px; background: var(--accent); opacity: .7; transition: width .3s; }
+    @keyframes pulse { 50% { opacity: .35; } }
+    #vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse at 50% 45%, transparent 55%, rgba(0, 0, 0, .28) 100%); }
+    #loading {
+      position: fixed; inset: 0; display: grid; place-items: center; background: #0d0a08; color: var(--muted);
+      z-index: 20; transition: opacity .8s; font-size: 13px; letter-spacing: .08em;
+    }
+    #loading.gone { opacity: 0; pointer-events: none; }
     .lil-gui.root { --background-color: rgba(22, 17, 13, .85); --title-background-color: rgba(30, 24, 18, .9); --widget-color: #3a2f26; --hover-color: #4a3d31; --focus-color: #56473a; --number-color: #ffb566; }
 
     @media (max-width: 720px) {
       :root { --dial: 112px; }
       #ui { gap: 12px; padding: 10px 12px; bottom: 44px; border-radius: 18px; }
+      #status { bottom: auto; top: 14px; right: 14px; }
       .presets { grid-template-columns: 1fr; gap: 4px; }
       button { padding: 5px 9px; font-size: 11px; }
       .center .big { font-size: 16px; }
@@ -116,8 +134,11 @@
   <script type="importmap">
     {
       "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
-        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+        "three": "https://cdn.jsdelivr.net/npm/three@0.182.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/",
+        "three/examples/jsm/": "https://cdn.jsdelivr.net/npm/three@0.182.0/examples/jsm/",
+        "three-mesh-bvh": "https://cdn.jsdelivr.net/npm/three-mesh-bvh@0.9.15/build/index.module.js",
+        "three-gpu-pathtracer": "https://cdn.jsdelivr.net/npm/three-gpu-pathtracer@0.0.24/build/index.module.js",
         "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.20.0/dist/lil-gui.esm.min.js"
       }
     }
@@ -126,9 +147,12 @@
 <body>
   <div id="title">
     <h1>Light Study</h1>
-    <p>Turn the dials. Drag the room to look around.</p>
+    <p>Turn the dials, then let go: the view path traces to a photoreal render.</p>
   </div>
+  <div id="vignette"></div>
   <div id="ui"></div>
+  <div id="status"></div>
+  <div id="loading">Building the room…</div>
   <a id="back" href="../">&larr; gotoAndStop</a>
   <script type="module" src="./src/main.js"></script>
 </body>

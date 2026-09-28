@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 
 const DEG = Math.PI / 180;
-const LAT = 40;   // degrees north
-const DECL = 12;  // late spring: long evenings
+const LAT = 31;   // the Agafay desert outside Marrakech
+const DECL = 14;  // late spring
 
-// Sun position for a local solar time (hours) and the compass bearing the window faces.
-// The room is fixed: the window is in the -x wall, so "window faces F" means compass
-// bearing F maps to world -x. Returns the direction toward the sun in world space.
+// Sun position for local solar time (hours) and the compass bearing the glass wall faces.
+// The glass wall is the room's -z side: bearing F maps to world -z and "clockwise" (to the right
+// when looking out) maps to +x. Returns the direction toward the sun in world space.
 export function sunPosition(hours, facingDeg, out = new THREE.Vector3()) {
   const H = (hours - 12) * 15 * DEG;
   const phi = LAT * DEG, dec = DECL * DEG;
@@ -17,44 +17,52 @@ export function sunPosition(hours, facingDeg, out = new THREE.Vector3()) {
   const elevation = Math.asin(up) / DEG;
   const rho = (azimuth - facingDeg) * DEG;
   const h = Math.hypot(east, north);
-  out.set(-Math.cos(rho) * h, up, -Math.sin(rho) * h).normalize();
+  out.set(Math.sin(rho) * h, up, -Math.cos(rho) * h).normalize();
   return { dir: out, azimuth, elevation };
 }
 
-// Moon: opposite the sun in azimuth, riding at a fixed height.
 export function moonPosition(sunAzimuth, facingDeg, out = new THREE.Vector3()) {
   const az = (sunAzimuth + 180) % 360;
-  const el = 38 * DEG;
+  const el = 42 * DEG;
   const rho = (az - facingDeg) * DEG;
-  out.set(-Math.cos(rho) * Math.cos(el), Math.sin(el), -Math.sin(rho) * Math.cos(el));
+  out.set(Math.sin(rho) * Math.cos(el), Math.sin(el), -Math.cos(rho) * Math.cos(el));
   return { dir: out, azimuth: az };
 }
 
-// Keyframes by sun elevation (degrees). Colours are sRGB hex.
+// Keyframes by sun elevation (degrees), sRGB hex. Desert sky: bleached, hazy horizon.
 const SKY = [
-  [-18, 0x020308, 0x05070e],
-  [-9, 0x070b1c, 0x151a33],
-  [-4, 0x18203f, 0x5a4063],
-  [-1, 0x27365f, 0xc0674c],
-  [2, 0x3b5185, 0xf08a52],
-  [6, 0x4e6ea6, 0xffae6e],
-  [12, 0x5b89c6, 0xffd4a6],
-  [25, 0x5790d8, 0xd9e6f2],
-  [60, 0x3f82e0, 0xbad6f4],
+  [-18, 0x020308, 0x05070d],
+  [-9, 0x060a1a, 0x12162c],
+  [-4, 0x151c38, 0x4a3a58],
+  [-1, 0x24325a, 0xb86a50],
+  [2, 0x3a4f80, 0xf0955e],
+  [6, 0x5373a8, 0xffbf8a],
+  [12, 0x6d93c8, 0xffe2c4],
+  [25, 0x7fa6d6, 0xf4efe6],
+  [60, 0x6f9fdc, 0xf2f0ec],
 ];
 
 const SUN = [
   [-2, 0xff6a2a, 0],
-  [1, 0xff7a33, 1.2],
-  [4, 0xff9448, 3.2],
-  [8, 0xffb46a, 4.2],
-  [15, 0xffd29a, 5.0],
-  [30, 0xffeccc, 5.6],
-  [60, 0xfff6ea, 6.0],
+  [1, 0xff7a33, 1.0],
+  [4, 0xff9448, 2.6],
+  [8, 0xffb46a, 3.6],
+  [15, 0xffd29a, 4.4],
+  [30, 0xffecd2, 5.0],
+  [60, 0xfff5ea, 5.4],
+];
+
+// Distant-haze tint applied to the landscape (mountains + plains) by time of day.
+const HAZE = [
+  [-12, 0x0a0d18],
+  [-4, 0x3a3048],
+  [0, 0xb07a66],
+  [4, 0xe0a680],
+  [10, 0xf0d0b4],
+  [25, 0xffffff],
 ];
 
 const _a = new THREE.Color(), _b = new THREE.Color();
-
 function sample(table, el, idx, out) {
   if (el <= table[0][0]) return out.setHex(table[0][idx]);
   for (let i = 1; i < table.length; i++) {
@@ -65,7 +73,6 @@ function sample(table, el, idx, out) {
   }
   return out.setHex(table[table.length - 1][idx]);
 }
-
 function sampleScalar(table, el, idx) {
   if (el <= table[0][0]) return table[0][idx];
   for (let i = 1; i < table.length; i++) {
@@ -82,16 +89,18 @@ export const smooth = (a, b, x) => {
   return t * t * (3 - 2 * t);
 };
 
-// Everything the lighting needs for a given sun elevation.
 export function lightingFor(el, out) {
   sample(SKY, el, 1, out.zenith);
   sample(SKY, el, 2, out.horizon);
   sample(SUN, el, 1, out.sunColor);
+  sample(HAZE, el, 1, out.haze);
   out.sunIntensity = sampleScalar(SUN, el, 2);
-  out.day = smooth(-6, 18, el);             // overall daylight
-  out.night = 1 - smooth(-10, -2, el);      // moonlight + stars
-  out.lamps = 1 - smooth(-3, 9, el);        // interior lamps come on through golden hour
-  out.exposure = 0.85 + 0.35 * (1 - smooth(4, 30, el)) + 0.3 * out.night;
+  out.day = smooth(-6, 18, el);
+  out.night = 1 - smooth(-10, -2, el);
+  out.lamps = 1 - smooth(-4, 6, el);
+  out.skyIntensity = 0.02 + 1.0 * smooth(-10, 20, el);
+  // exposure for a photographic interior: the view outside is allowed to bloom out
+  out.exposure = 8 + 5 * (1 - smooth(2, 35, el)) - 2 * (1 - smooth(-8, 0, el));
   return out;
 }
 
@@ -103,56 +112,91 @@ export function phaseName(hours, el) {
   return hours < 12 ? 'Morning' : 'Afternoon';
 }
 
-// ---------------------------------------------------------------- sky dome
+// ---------------------------------------------------------------- equirect sky
+// Generated on the CPU so the path tracer can importance-sample it. The lighting version has no
+// sun disc (the directional light is the sun) and no stars; the background version has both.
 
-export function makeSky() {
-  const uniforms = {
-    uZenith: { value: new THREE.Color() },
-    uHorizon: { value: new THREE.Color() },
-    uSunDir: { value: new THREE.Vector3(0, 1, 0) },
-    uSunColor: { value: new THREE.Color() },
-    uSunVis: { value: 1 },
-    uMoonDir: { value: new THREE.Vector3(0, 1, 0) },
-    uNight: { value: 0 },
-    uTime: { value: 0 },
-    uBright: { value: 1 },
-  };
-  const mat = new THREE.ShaderMaterial({
-    uniforms,
-    side: THREE.BackSide,
-    depthWrite: false,
-    vertexShader: /* glsl */ `
-      varying vec3 vDir;
-      void main() {
-        vDir = position;
-        vec4 p = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-        gl_Position = p.xyww;
+function hash3(x, y, z) {
+  const s = Math.sin(x * 127.1 + y * 311.7 + z * 74.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+export class SkyTextures {
+  constructor(bgW = 1024, envW = 256) {
+    this.bg = makeEquirect(bgW, bgW / 2);
+    this.env = makeEquirect(envW, envW / 2);
+  }
+
+  update(p) {
+    fill(this.bg, p, true);
+    fill(this.env, p, false);
+  }
+}
+
+function makeEquirect(w, h) {
+  const t = new THREE.DataTexture(new Float32Array(w * h * 4), w, h, THREE.RGBAFormat, THREE.FloatType);
+  t.mapping = THREE.EquirectangularReflectionMapping;
+  t.wrapS = THREE.RepeatWrapping;
+  t.wrapT = THREE.ClampToEdgeWrapping;
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearFilter;
+  t.colorSpace = THREE.LinearSRGBColorSpace;
+  t.generateMipmaps = false;
+  return t;
+}
+
+// p: { zenith, horizon, sunColor, sunDir, sunVis, ground, night, moonDir, intensity }
+function fill(tex, p, background) {
+  const { width: W, height: H, data } = tex.image;
+  const zr = p.zenith.r, zg = p.zenith.g, zb = p.zenith.b;
+  const hr = p.horizon.r, hg = p.horizon.g, hb = p.horizon.b;
+  const sr = p.sunColor.r, sg = p.sunColor.g, sb = p.sunColor.b;
+  const gr = p.ground.r, gg = p.ground.g, gb = p.ground.b;
+  const sx = p.sunDir.x, sy = p.sunDir.y, sz = p.sunDir.z;
+  const mx = p.moonDir.x, my = p.moonDir.y, mz = p.moonDir.z;
+  const k = p.intensity, vis = p.sunVis, night = p.night;
+  const discCos = Math.cos(0.3 * DEG), glowCos = Math.cos(0.9 * DEG);
+  for (let j = 0; j < H; j++) {
+    const el = ((j + 0.5) / H - 0.5) * Math.PI;
+    const cy = Math.sin(el), ce = Math.cos(el);
+    for (let i = 0; i < W; i++) {
+      const az = ((i + 0.5) / W - 0.5) * Math.PI * 2;
+      const dx = Math.cos(az) * ce, dz = Math.sin(az) * ce;
+      let r, g, b;
+      if (cy >= 0) {
+        const t = Math.pow(cy, 0.42);
+        r = hr + (zr - hr) * t; g = hg + (zg - hg) * t; b = hb + (zb - hb) * t;
+        // bright haze band hugging the horizon
+        const band = Math.exp(-cy * 18) * 0.35;
+        r += hr * band; g += hg * band; b += hb * band;
+      } else {
+        const t = Math.min(1, -cy * 6);
+        r = hr * 0.8 + (gr - hr * 0.8) * t; g = hg * 0.8 + (gg - hg * 0.8) * t; b = hb * 0.8 + (gb - hb * 0.8) * t;
       }
-    `,
-    fragmentShader: /* glsl */ `
-      uniform vec3 uZenith, uHorizon, uSunDir, uSunColor, uMoonDir;
-      uniform float uSunVis, uNight, uTime, uBright;
-      varying vec3 vDir;
-      float hash(vec3 p) { p = fract(p * 0.3183099 + 0.1); p *= 17.0; return fract(p.x * p.y * p.z * (p.x + p.y + p.z)); }
-      void main() {
-        vec3 d = normalize(vDir);
-        float h = d.y;
-        vec3 col = mix(uHorizon, uZenith, pow(clamp(h, 0.0, 1.0), 0.5));
-        col = mix(col, uHorizon * 0.55, smoothstep(0.0, -0.25, h));
-        float s = max(dot(d, uSunDir), 0.0);
-        col += uSunColor * uSunVis * (pow(s, 2400.0) * 60.0 + pow(s, 64.0) * 0.6 + pow(s, 6.0) * 0.18 * (1.0 - abs(h)));
-        float m = max(dot(d, uMoonDir), 0.0);
-        col += vec3(0.75, 0.82, 1.0) * uNight * (smoothstep(0.99985, 0.99992, m) * 4.0 + pow(m, 200.0) * 0.08);
-        vec3 q = floor(d * 420.0);
-        float st = step(0.9972, hash(q)) * smoothstep(0.02, 0.25, h);
-        st *= 0.6 + 0.4 * sin(uTime * (1.5 + hash(q + 3.0) * 3.0) + hash(q) * 40.0);
-        col += vec3(0.9, 0.93, 1.0) * st * uNight * 1.4;
-        gl_FragColor = vec4(col * uBright, 1.0);
+      const mu = dx * sx + cy * sy + dz * sz;
+      if (mu > 0) {
+        // forward scattering around the sun
+        const glow = (Math.pow(mu, 8) * 0.35 + Math.pow(mu, 64) * 0.9 + Math.pow(mu, 900) * 6) * vis * (cy > -0.02 ? 1 : 0.2);
+        r += sr * glow; g += sg * glow; b += sb * glow;
+        if (background && mu > glowCos) {
+          const disc = mu > discCos ? 40 : 40 * ((mu - glowCos) / (discCos - glowCos)) * 0.15;
+          r += sr * disc * vis; g += sg * disc * vis; b += sb * disc * vis;
+        }
       }
-    `,
-  });
-  const mesh = new THREE.Mesh(new THREE.SphereGeometry(80, 48, 24), mat);
-  mesh.frustumCulled = false;
-  mesh.renderOrder = -1;
-  return { mesh, uniforms };
+      if (background && night > 0.01 && cy > 0) {
+        const s = hash3(Math.floor(dx * 700), Math.floor(cy * 700), Math.floor(dz * 700));
+        if (s > 0.9978) {
+          const tw = (s - 0.9978) / 0.0022;
+          const st = night * (0.6 + tw * 2.5) * Math.min(1, cy * 8);
+          r += st * 0.9; g += st * 0.93; b += st;
+        }
+        const m = dx * mx + cy * my + dz * mz;
+        if (m > 0.99985) { r += 3 * night; g += 3.2 * night; b += 3.6 * night; }
+        else if (m > 0.98) { const mg = Math.pow((m - 0.98) / 0.02, 6) * 0.08 * night; r += mg; g += mg; b += mg * 1.2; }
+      }
+      const o = (j * W + i) * 4;
+      data[o] = r * k; data[o + 1] = g * k; data[o + 2] = b * k; data[o + 3] = 1;
+    }
+  }
+  tex.needsUpdate = true;
 }
