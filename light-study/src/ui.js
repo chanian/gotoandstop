@@ -44,6 +44,13 @@ function place(el, angleDeg, radiusPct) {
 export function createUI(state, { onPreset }) {
   const root = document.getElementById('ui');
   root.innerHTML = `
+    <button class="collapse" id="collapse" title="Hide controls (H)" aria-label="Hide controls">
+      <svg viewBox="0 0 12 12" width="12" height="12"><path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <button class="mini" id="mini" title="Show controls (H)" aria-label="Show controls">
+      <span class="mini-orb" id="miniOrb"></span><b id="miniTime">15:00</b><span id="miniPhase"></span><span class="sep">·</span><span id="miniFace">SW</span>
+      <svg viewBox="0 0 12 12" width="12" height="12"><path d="M2.5 7.5 6 4l3.5 3.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
     <div class="dial" id="timeDial" aria-label="Time of day" role="slider">
       <div class="ring time-ring"></div>
       <div class="ticks">${Array.from({ length: 24 }, (_, i) => `<i style="transform: rotate(${i * 15}deg)" class="${i % 6 === 0 ? 'major' : ''}"></i>`).join('')}</div>
@@ -81,6 +88,27 @@ export function createUI(state, { onPreset }) {
   const faceText = root.querySelector('#faceText');
   const play = root.querySelector('#play');
   const presetBtns = [...root.querySelectorAll('.presets button')];
+  const miniTime = root.querySelector('#miniTime');
+  const miniPhase = root.querySelector('#miniPhase');
+  const miniFace = root.querySelector('#miniFace');
+  const miniOrb = root.querySelector('#miniOrb');
+
+  // collapse to a small pill so the dials don't cover the render
+  const KEY = 'light-study-ui-collapsed';
+  const setCollapsed = (on) => {
+    root.classList.toggle('collapsed', on);
+    try { localStorage.setItem(KEY, on ? '1' : '0'); } catch { /* ignore */ }
+  };
+  // collapsed by default; remember if someone opens it
+  let stored = null;
+  try { stored = localStorage.getItem(KEY); } catch { /* ignore */ }
+  if (stored !== '0') root.classList.add('collapsed');
+  root.querySelector('#collapse').addEventListener('click', () => setCollapsed(true));
+  root.querySelector('#mini').addEventListener('click', () => setCollapsed(false));
+  addEventListener('keydown', (e) => {
+    if (e.target instanceof HTMLInputElement || e.metaKey || e.ctrlKey) return;
+    if (e.key === 'h' || e.key === 'H') setCollapsed(!root.classList.contains('collapsed'));
+  });
 
   dragDial(timeDial, (a) => {
     state.timeAnim = null;
@@ -102,11 +130,15 @@ export function createUI(state, { onPreset }) {
       timeKnob.classList.toggle('moon', elevation < -4);
       timeText.textContent = fmtTime(hours);
       phaseText.textContent = phase;
+      miniTime.textContent = fmtTime(hours);
+      miniPhase.textContent = phase;
+      miniOrb.classList.toggle('moon', elevation < -4);
       place(windowMark, facing, 31);
       windowMark.style.transform = `translate(-50%, -50%) rotate(${facing}deg)`;
       place(sunDot, sunAzimuth, 42.75);
       sunDot.classList.toggle('down', elevation < 0);
       faceText.textContent = COMPASS[Math.round(facing / 45) % 8];
+      miniFace.textContent = `faces ${faceText.textContent}`;
       play.classList.toggle('on', state.playing);
       const near = PRESETS.reduce((best, p) => {
         const d = Math.min(Math.abs(p.hours - hours), 24 - Math.abs(p.hours - hours));

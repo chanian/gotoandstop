@@ -12,7 +12,10 @@ in the browser. Turn the dials to move the sun; let go and the view refines to a
 - **Compass dial**: turns the direction the glass wall faces. The dot on the ring is the sun's bearing.
 - **Drag** to look around a little.
 - **Render** (top right): toggle path tracing, sample count, path-trace resolution, light bounces, denoise and exposure.
-- URL parameters: `?t=18.2&face=205` sets the time and bearing, `?raster` skips path tracing, `?ptscale=0.5` sets path-trace resolution.
+- The dial panel starts collapsed to a small pill (time · phase · bearing). Click it or press **H** to open it.
+- Once the room has built, it starts path tracing on the **Draft** preset. **Render → Path tracing** switches to
+  Balanced or Final (slower, higher fidelity), or turns Photoreal off for the live preview.
+- URL parameters: `?t=18.2&face=205` sets the time and bearing, `?preview` starts with path tracing off, `?ptscale=0.5` sets path-trace resolution.
 
 ## How it works
 

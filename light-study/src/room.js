@@ -229,32 +229,37 @@ function bowlGeo(r, h, wall = 0.008, oval = 1.3) {
 
 // ---------------------------------------------------------------- build
 
-export function buildRoom(scene) {
+// Builds the room in stages, awaiting step(label) between them so the page can draw the
+// construction as it happens. Textures are generated last (they're the slow part): materials are
+// created bare and get their maps filled in at the end.
+export async function buildRoom(scene, step = async () => {}) {
   const out = { tinted: [], lampAnchors: [] };
   const rng = mulberry(7);
 
   // materials ------------------------------------------------------------
-  const floorTx = TX.concrete({ seed: 1, base: [118, 112, 104], repeat: [2.5, 2.5], rough: [0.1, 0.3] });
-  const floorMat = new THREE.MeshStandardMaterial({ ...floorTx, roughness: 1 });
-  const terraceTx = TX.concrete({ seed: 5, base: [192, 184, 172], repeat: [6, 6], rough: [0.55, 0.85], contrast: 1.4 });
-  const terraceMat = new THREE.MeshStandardMaterial({ ...terraceTx, roughness: 1 });
-  const plasterTx = TX.plaster({ seed: 11, base: [200, 182, 158], repeat: [1.5, 1.5] });
-  const plasterMat = new THREE.MeshStandardMaterial({ ...plasterTx, roughness: 1 });
-  const wallTx = TX.plaster({ seed: 13, base: [214, 204, 190], repeat: [1.2, 1.2] });
-  const wallMat = new THREE.MeshStandardMaterial({ ...wallTx, roughness: 1 });
-  const ceilMat = new THREE.MeshStandardMaterial({ ...TX.plaster({ seed: 15, base: [176, 164, 148], repeat: [2, 2] }), roughness: 1 });
+  const later = [];
+  const withTex = (mat, make, label) => { later.push({ label, run: () => { Object.assign(mat, make()); mat.needsUpdate = true; } }); return mat; };
+  const floorMat = withTex(new THREE.MeshStandardMaterial({ roughness: 1 }), () => TX.concrete({ seed: 1, base: [118, 112, 104], repeat: [2.5, 2.5], rough: [0.1, 0.3] }), 'Polishing the concrete');
+  const terraceMat = withTex(new THREE.MeshStandardMaterial({ roughness: 1 }), () => TX.concrete({ seed: 5, base: [192, 184, 172], repeat: [6, 6], rough: [0.55, 0.85], contrast: 1.4 }), 'Weathering the terrace');
+  const plasterMat = withTex(new THREE.MeshStandardMaterial({ roughness: 1 }), () => TX.plaster({ seed: 11, base: [200, 182, 158], repeat: [1.5, 1.5] }), 'Burnishing the tadelakt');
+  const wallMat = withTex(new THREE.MeshStandardMaterial({ roughness: 1 }), () => TX.plaster({ seed: 13, base: [214, 204, 190], repeat: [1.2, 1.2] }), 'Limewashing the walls');
+  const ceilMat = withTex(new THREE.MeshStandardMaterial({ roughness: 1 }), () => TX.plaster({ seed: 15, base: [176, 164, 148], repeat: [2, 2] }), 'Plastering the ceiling');
   const bronze = new THREE.MeshStandardMaterial({ color: hex(0x2e2721), metalness: 0.75, roughness: 0.42 });
   const glassMat = new THREE.MeshPhysicalMaterial({ color: 0xffffff, metalness: 0, roughness: 0, transmission: 1, ior: 1.5, thickness: 0, transparent: true, specularIntensity: 1 });
-  const linenN = TX.linenNormal([7, 7], 2.2);
-  const sofaMat = new THREE.MeshPhysicalMaterial({ color: hex(0x5a5957), roughness: 0.92, normalMap: linenN, normalScale: new THREE.Vector2(0.6, 0.6), sheen: 0.7, sheenRoughness: 0.6, sheenColor: hex(0x8f8b86) });
-  const curtainMat = new THREE.MeshPhysicalMaterial({ color: hex(0x363534), roughness: 0.95, normalMap: linenN, normalScale: new THREE.Vector2(0.5, 0.5), sheen: 0.6, sheenRoughness: 0.7, sheenColor: hex(0x6a6663), side: THREE.DoubleSide });
-  const kilims = [TX.kilim(41), TX.kilim(43), TX.kilim(47)].map((map) => new THREE.MeshPhysicalMaterial({ map, roughness: 0.95, sheen: 0.5, sheenRoughness: 0.6, sheenColor: hex(0x9a8470) }));
-  const walnutTx = TX.walnut({ seed: 51, base: [96, 66, 48], repeat: [1.1, 1.1] });
-  const walnut = new THREE.MeshStandardMaterial({ ...walnutTx, roughness: 1 });
-  const bowlWood = new THREE.MeshStandardMaterial({ ...TX.walnut({ seed: 55, base: [120, 86, 58], repeat: [3, 3] }), roughness: 1, side: THREE.DoubleSide });
+  const sofaMat = new THREE.MeshPhysicalMaterial({ color: hex(0x5a5957), roughness: 0.92, normalScale: new THREE.Vector2(0.6, 0.6), sheen: 0.7, sheenRoughness: 0.6, sheenColor: hex(0x8f8b86) });
+  const curtainMat = new THREE.MeshPhysicalMaterial({ color: hex(0x363534), roughness: 0.95, normalScale: new THREE.Vector2(0.5, 0.5), sheen: 0.6, sheenRoughness: 0.7, sheenColor: hex(0x6a6663), side: THREE.DoubleSide });
+  const mattressMat = new THREE.MeshPhysicalMaterial({ color: hex(0x7c7a77), roughness: 0.95, sheen: 0.5, sheenColor: hex(0x9a9690) });
+  later.push({ label: 'Weaving the linen', run: () => {
+    const linenN = TX.linenNormal([7, 7], 2.2);
+    for (const m of [sofaMat, curtainMat, mattressMat]) { m.normalMap = linenN; m.needsUpdate = true; }
+  } });
+  const kilims = [41, 43, 47].map((seed) => withTex(new THREE.MeshPhysicalMaterial({ roughness: 0.95, sheen: 0.5, sheenRoughness: 0.6, sheenColor: hex(0x9a8470) }), () => ({ map: TX.kilim(seed) }), 'Knotting the kilims'));
+  const walnut = withTex(new THREE.MeshStandardMaterial({ roughness: 1 }), () => TX.walnut({ seed: 51, base: [96, 66, 48], repeat: [1.1, 1.1] }), 'Oiling the walnut');
+  const bowlWood = withTex(new THREE.MeshStandardMaterial({ roughness: 1, side: THREE.DoubleSide }), () => TX.walnut({ seed: 55, base: [120, 86, 58], repeat: [3, 3] }), 'Turning the bowls');
   const ceramic = new THREE.MeshStandardMaterial({ color: hex(0x3a3633), roughness: 0.55 });
   const steel = new THREE.MeshStandardMaterial({ color: hex(0xb8b6b2), metalness: 1, roughness: 0.32 });
 
+  await step('Pouring the concrete');
   // shell -------------------------------------------------------------------
   const { x0, x1, z0, z1, y1 } = ROOM;
   const floor = mesh(new THREE.PlaneGeometry(x1 - x0, z1 - z0), floorMat, { cast: false });
@@ -279,6 +284,7 @@ export function buildRoom(scene) {
     out.lampAnchors.push(new THREE.Vector3(lx, y1 - 0.03, lz));
   }
 
+  await step('Framing the glass');
   // glass wall ------------------------------------------------------------
   const gz = z0;
   scene.add(box(GLASS.x1 - GLASS.x0, 0.03, 0.14, bronze, (GLASS.x0 + GLASS.x1) / 2, 0.015, gz));
@@ -294,6 +300,7 @@ export function buildRoom(scene) {
   pane(GLASS.frames[2] + 0.035, GLASS.frames[3] - 0.03, gz - 0.03); // the second slider, stacked behind
   scene.add(box(0.05, GLASS.y1, 0.1, bronze, GLASS.frames[2] + 0.01, GLASS.y1 / 2, gz - 0.03));
 
+  await step('Hanging the curtains');
   // heavy charcoal curtains, right of the glass --------------------------
   {
     const w = 1.7, h = y1 - 0.04;
@@ -312,6 +319,7 @@ export function buildRoom(scene) {
     scene.add(box(2.0, 0.03, 0.06, bronze, 4.55, y1 - 0.02, z0 + 0.22));
   }
 
+  await step('Weaving the rug');
   // Beni Ourain rug -------------------------------------------------------
   {
     const rug = TX.beniOurain();
@@ -350,6 +358,7 @@ export function buildRoom(scene) {
     scene.add(bake(fringe));
   }
 
+  await step('Shaping the tables');
   // coffee tables + bowls --------------------------------------------------
   const tables = [
     { a: 0.72, b: 0.3, top: 0.36, seed: 3, x: -0.95, z: 1.25, ry: 0.06 },
@@ -377,6 +386,7 @@ export function buildRoom(scene) {
   lid.position.set(0.1, 0.45, 1.1);
   scene.add(lid);
 
+  await step('Carving the root stool');
   // teak root stool --------------------------------------------------------
   {
     let geo = new THREE.IcosahedronGeometry(0.32, 24);
@@ -399,12 +409,13 @@ export function buildRoom(scene) {
     }
     geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     geo.computeVertexNormals();
-    const stool = mesh(geo, new THREE.MeshStandardMaterial({ map: TX.teakRoot(), roughness: 0.88 }));
+    const stool = mesh(geo, withTex(new THREE.MeshStandardMaterial({ roughness: 0.88 }), () => ({ map: TX.teakRoot() }), 'Bleaching the teak'));
     stool.position.set(-2.25, 0.26, -0.45);
     stool.rotation.y = 0.8;
     scene.add(stool);
   }
 
+  await step('Upholstering the sofa');
   // sectional sofa ---------------------------------------------------------
   const right = sofa({
     width: 3.7, depth: 1.2, fabric: sofaMat, armL: true, seats: 3, pillows: [
@@ -434,6 +445,7 @@ export function buildRoom(scene) {
     scene.add(pm);
   };
 
+  await step('Laying the terrace');
   // ---------------------------------------------------------------- outside
   const terrace = mesh(new THREE.PlaneGeometry(24, 14), terraceMat, { cast: false });
   terrace.rotation.x = -Math.PI / 2;
@@ -455,14 +467,14 @@ export function buildRoom(scene) {
   ledge.rotation.y = -0.07;
   scene.add(ledge);
   // lawn beyond
-  const lawn = mesh(new THREE.PlaneGeometry(12, 6), new THREE.MeshStandardMaterial({ color: hex(0x6c8a3c), roughness: 1, map: TX.desertGrit([10, 5]) }), { cast: false });
+  const lawn = mesh(new THREE.PlaneGeometry(12, 6), withTex(new THREE.MeshStandardMaterial({ color: hex(0x6c8a3c), roughness: 1 }), () => ({ map: TX.desertGrit([10, 5]) }), 'Watering the lawn'), { cast: false });
   lawn.rotation.x = -Math.PI / 2;
   lawn.position.set(-12.5, 0.0, z0 - 11);
   scene.add(lawn);
 
   // built-in daybed
   scene.add(box(7.6, 0.32, 0.95, terraceMat, 0.2, 0.16, z0 - 7.35));
-  const mattress = mesh(cushionGeo(7.3, 0.13, 0.85, { r: 0.05, puff: 0.02 }), new THREE.MeshPhysicalMaterial({ color: hex(0x7c7a77), roughness: 0.95, normalMap: linenN, sheen: 0.5, sheenColor: hex(0x9a9690) }));
+  const mattress = mesh(cushionGeo(7.3, 0.13, 0.85, { r: 0.05, puff: 0.02 }), mattressMat);
   mattress.position.set(0.2, 0.39, z0 - 7.32);
   scene.add(mattress);
   pillow(0.6, 0.45, 0.18, kilims[1], -2.3, 0.688, z0 - 7.62, -0.35, 0, 0.1);
@@ -471,7 +483,7 @@ export function buildRoom(scene) {
   pillow(0.6, 0.45, 0.18, sofaMat, 2.9, 0.688, z0 - 7.62, -0.35, 0, -0.1);
 
   // two carved wooden stools
-  const stoolWood = new THREE.MeshStandardMaterial({ ...TX.walnut({ seed: 57, base: [150, 118, 84], repeat: [2, 2] }), roughness: 0.8 });
+  const stoolWood = withTex(new THREE.MeshStandardMaterial({ roughness: 0.8 }), () => TX.walnut({ seed: 57, base: [150, 118, 84], repeat: [2, 2] }), 'Carving the stools');
   for (const [sx, sz, sr] of [[-1.05, z0 - 4.3, 0.2], [-0.45, z0 - 4.45, 0.18]]) {
     const st = new THREE.Group();
     const seat = mesh(new THREE.CylinderGeometry(sr, sr * 0.92, 0.06, 32), stoolWood);
@@ -488,11 +500,12 @@ export function buildRoom(scene) {
     scene.add(st);
   }
 
+  await step('Stacking the stone wall');
   // dry-stone wall on the right
   {
     const stoneGeo = new THREE.DodecahedronGeometry(1, 0);
     const N = 520;
-    const stones = new THREE.InstancedMesh(stoneGeo, new THREE.MeshStandardMaterial({ map: TX.rock([1, 1]), roughness: 0.95, flatShading: true }), N);
+    const stones = new THREE.InstancedMesh(stoneGeo, withTex(new THREE.MeshStandardMaterial({ roughness: 0.95, flatShading: true }), () => ({ map: TX.rock([1, 1]) }), 'Stacking the stone wall'), N);
     const a = new THREE.Vector3(4.9, 0, -14.5), b = new THREE.Vector3(7.8, 0, -8.8);
     const len = a.distanceTo(b), dir = b.clone().sub(a).normalize();
     const side = new THREE.Vector3(-dir.z, 0, dir.x);
@@ -537,12 +550,20 @@ export function buildRoom(scene) {
   }
 
   // ---------------------------------------------------------------- desert
-  const terrainMat = new THREE.MeshStandardMaterial({ vertexColors: true, map: TX.desertGrit([1, 1]), roughness: 1 });
+  await step('Rolling out the desert');
+  const terrainMat = withTex(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 }), () => ({ map: TX.desertGrit([1, 1]) }), 'Scattering the grit');
   scene.add(mesh(desertTerrain(), terrainMat, { cast: true }));
+  await step('Raising the Atlas');
   const mountainMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, emissive: 0xffffff, emissiveIntensity: 0 });
   out.mountainMat = mountainMat;
   scene.add(mesh(mountains(), mountainMat, { cast: false }));
   out.tinted.push(terrainMat, mountainMat);
+
+  // now the slow part: generate every texture
+  for (const t of later) {
+    await step(t.label);
+    t.run();
+  }
 
   out.materials = { floorMat, sofaMat, curtainMat, trimMat };
   return out;

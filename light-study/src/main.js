@@ -32,17 +32,25 @@ const state = {
   playing: false,
   timeAnim: null,
 };
+// Quality presets trade fidelity for speed. The big levers: pixels traced (resolution), path
+// length (bounces), and how many samples run per displayed frame.
+const DPR_SCALE = Math.min(1, 1.25 / devicePixelRatio);
+const QUALITY = {
+  Draft: { ptScale: 0.4 * DPR_SCALE, bounces: 3, spf: 'Auto', lowRes: true, texSize: 512, maxSamples: 160 },
+  Balanced: { ptScale: 0.65 * DPR_SCALE, bounces: 5, spf: 'Auto', lowRes: true, texSize: 1024, maxSamples: 500 },
+  Final: { ptScale: DPR_SCALE, bounces: 8, spf: 'Auto', lowRes: false, texSize: 1024, maxSamples: 1500 },
+};
 const opts = {
-  pathTrace: !params.has('raster'),
-  maxSamples: 800,
-  bounces: 6,
-  ptScale: params.has('ptscale') ? +params.get('ptscale') : Math.min(1, 1.25 / devicePixelRatio),
+  pathTrace: !params.has('preview'), // starts path tracing (Draft) once the room has loaded
+  quality: 'Draft',
+  ...QUALITY.Draft,
   denoise: true,
   ao: true,
   bloom: true,
   exposure: 0,
   meshes: 'Off',
 };
+if (params.has('ptscale')) { opts.ptScale = +params.get('ptscale'); opts.quality = 'Custom'; }
 
 const statusEl = document.getElementById('status');
 const loadingEl = document.getElementById('loading');
@@ -239,6 +247,9 @@ function syncPathTracer() {
   pathTracer.updateMaterials();
   pathTracer.updateCamera();
   pathTracer.reset();
+  rateSamples = 0;
+  rateTime = performance.now();
+  turbo = 1;
   pathTracer.enablePathTracing = true;
   pathTracer.pausePathTracing = false;
 }
@@ -272,7 +283,10 @@ function initPathTracer() {
   pathTracer = new WebGLPathTracer(renderer);
   pathTracer.bounces = opts.bounces;
   pathTracer.filterGlossyFactor = 0.6;
-  pathTracer.tiles.set(2, 2);
+  pathTracer.tiles.set(1, 1); // full frames: throughput is managed by samples-per-frame instead
+  pathTracer.dynamicLowRes = opts.lowRes;
+  pathTracer.lowResScale = 0.2;
+  pathTracer.textureSize.set(opts.texSize, opts.texSize);
   pathTracer.minSamples = 3;
   pathTracer.fadeDuration = 700;
   pathTracer.renderDelay = 0;
@@ -317,15 +331,40 @@ const ui = createUI(state, {
 controls.addEventListener('change', () => dirty());
 
 const gui = new GUI({ title: 'Render' });
-gui.add(opts, 'pathTrace').name('Photoreal (path traced)').onChange(() => dirty());
-gui.add(opts, 'maxSamples', [128, 256, 512, 800, 1500, 3000]).name('Samples').onChange(() => { if (pathTracer) pathTracer.pausePathTracing = false; });
-gui.add(opts, 'ptScale', 0.25, 1, 0.05).name('Path trace resolution').onChange((v) => { if (pathTracer) pathTracer.renderScale = v; dirty(); });
-gui.add(opts, 'bounces', 2, 12, 1).name('Light bounces').onChange((v) => { if (pathTracer) pathTracer.bounces = v; dirty(); });
-gui.add(opts, 'denoise').name('Denoise');
-gui.add(opts, 'exposure', -2, 2, 0.05).name('Exposure (stops)').onChange(() => dirty());
-gui.add(opts, 'ao').name('Preview AO').onChange((v) => { gtao.enabled = v; });
-gui.add(opts, 'bloom').name('Preview bloom').onChange((v) => { bloom.enabled = v; });
-gui.add(opts, 'meshes', ['Off', 'Overlay', 'Wireframe']).name('Show meshes').onChange(setMeshView);
+const custom = () => { if (opts.quality !== 'Custom') { opts.quality = 'Custom'; qualityCtrl.updateDisplay(); } };
+function applyPT() {
+  if (!pathTracer) return;
+  pathTracer.renderScale = opts.ptScale;
+  pathTracer.bounces = opts.bounces;
+  pathTracer.dynamicLowRes = opts.lowRes;
+  if (pathTracer.textureSize.x !== opts.texSize) {
+    pathTracer.textureSize.set(opts.texSize, opts.texSize);
+    pathTracer.updateMaterials();
+  }
+  pathTracer.pausePathTracing = false;
+}
+const pt = gui.addFolder('Path tracing');
+pt.add(opts, 'pathTrace').name('Photoreal (path traced)').onChange((on) => { if (on) startPathTracer(0); dirty(); });
+const qualityCtrl = pt.add(opts, 'quality', ['Draft', 'Balanced', 'Final', 'Custom']).name('Quality preset').onChange((q) => {
+  if (!QUALITY[q]) return;
+  Object.assign(opts, QUALITY[q]);
+  gui.controllersRecursive().forEach((c) => c.updateDisplay());
+  applyPT();
+  dirty();
+});
+pt.add(opts, 'ptScale', 0.15, 1, 0.05).name('Resolution').onChange(() => { custom(); applyPT(); dirty(); });
+pt.add(opts, 'bounces', 1, 12, 1).name('Light bounces').onChange(() => { custom(); applyPT(); dirty(); });
+pt.add(opts, 'spf', ['Auto', 1, 2, 4, 8, 16]).name('Samples per frame').onChange(custom);
+pt.add(opts, 'lowRes').name('Instant low-res preview').onChange(() => { custom(); applyPT(); dirty(); });
+pt.add(opts, 'texSize', [256, 512, 1024]).name('Texture size').onChange(() => { custom(); applyPT(); dirty(); });
+pt.add(opts, 'maxSamples', [64, 160, 256, 500, 800, 1500, 3000]).name('Stop at samples').onChange(() => { custom(); if (pathTracer) pathTracer.pausePathTracing = false; });
+pt.add(opts, 'denoise').name('Denoise');
+const pv = gui.addFolder('Look & preview');
+pv.add(opts, 'exposure', -2, 2, 0.05).name('Exposure (stops)').onChange(() => dirty());
+pv.add(opts, 'ao').name('Preview AO').onChange((v) => { gtao.enabled = v && opts.meshes === 'Off'; });
+pv.add(opts, 'bloom').name('Preview bloom').onChange((v) => { bloom.enabled = v; });
+pv.add(opts, 'meshes', ['Off', 'Overlay', 'Wireframe']).name('Show meshes').onChange(setMeshView);
+pv.close();
 gui.close();
 
 // ------------------------------------------------------------------ mesh view
@@ -388,8 +427,14 @@ function setMeshView(mode) {
 const clock = new THREE.Clock();
 const ease = (x) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 let lastUI = '';
+let turbo = 1;
+let lastFrame = performance.now();
+let rate = 0, rateSamples = 0, rateTime = performance.now();
 
 function frame() {
+  const now = performance.now();
+  const frameMs = now - lastFrame;
+  lastFrame = now;
   const dt = Math.min(clock.getDelta(), 1 / 20);
   skyTimer -= dt;
 
@@ -419,26 +464,98 @@ function frame() {
   ui.update({ hours: state.hours, facing: state.facing, sunAzimuth: current.azimuth, elevation: current.el, phase: phaseName(state.hours, current.el) });
 
   if (pathTracing()) {
-    if (pathTracer.samples >= opts.maxSamples) pathTracer.pausePathTracing = true;
-    pathTracer.renderSample();
+    // several samples per displayed frame; Auto grows until frames approach ~30 fps
+    if (opts.spf === 'Auto') {
+      if (frameMs < 26) turbo = Math.min(32, turbo + 1);
+      else if (frameMs > 40) turbo = Math.max(1, turbo - 1);
+    } else turbo = +opts.spf;
+    const n = pathTracer.pausePathTracing ? 1 : turbo;
+    for (let i = 0; i < n; i++) {
+      if (pathTracer.samples >= opts.maxSamples) pathTracer.pausePathTracing = true;
+      // draw on the first call: the library advances its fade by the time since its last call,
+      // which is only a real frame interval for the first call of each frame
+      pathTracer.renderToCanvas = i === 0;
+      pathTracer.renderSample();
+    }
+    pathTracer.renderToCanvas = true;
     const s = Math.floor(pathTracer.samples);
+    if (now - rateTime > 700) {
+      rate = Math.max(0, (pathTracer.samples - rateSamples) / ((now - rateTime) / 1000));
+      rateSamples = pathTracer.samples;
+      rateTime = now;
+    }
     const done = pathTracer.pausePathTracing;
     const pct = Math.min(100, (s / opts.maxSamples) * 100).toFixed(0);
-    setStatus(`<span class="dot ${done ? 'done' : 'on'}"></span>${done ? 'Photoreal' : 'Path tracing'} · ${s} samples<i style="width:${pct}%"></i>`);
+    setStatus(`<span class="dot ${done ? 'done' : 'on'}"></span>${done ? 'Photoreal' : 'Path tracing'} · ${s} samples${done ? '' : ` · ${rate.toFixed(rate < 10 ? 1 : 0)}/s`}<i style="width:${pct}%"></i>`);
   } else if (opts.meshes !== 'Off') {
     composer.render();
     setStatus(`<span class="dot"></span>Mesh view · ${(triangleCount / 1e6).toFixed(2)}M triangles`);
   } else {
     composer.render();
-    setStatus(`<span class="dot"></span>${pathTracer || !opts.pathTrace ? 'Live preview' : 'Preparing path tracer…'}${opts.pathTrace && pathTracer ? ' · let go to render' : ''}`);
+    const hint = !opts.pathTrace ? ' · Render → Photoreal for path tracing' : pathTracer ? ' · let go to render' : '';
+    setStatus(`<span class="dot"></span>${opts.pathTrace && !pathTracer ? 'Preparing path tracer…' : 'Live preview'}${hint}`);
   }
   requestAnimationFrame(frame);
 }
 
+// ------------------------------------------------------------------ construction view
+// While the room builds, draw it as a hidden-line wireframe: every mesh fades in, in its own colour,
+// as it's created, and the camera eases in. Then the finished wireframe dissolves into the scene.
+
+let building = true;
+const buildWires = [];
+const buildStart = performance.now();
+const camFinal = camera.position.clone();
+const camStart = new THREE.Vector3(0.9, 2.35, 6.15);
+const PUSH_MS = 5200;
+
+function wireNewMeshes() {
+  for (const m of meshes()) {
+    if (m.userData.wired) continue;
+    m.userData.wired = true;
+    const col = new THREE.Color().setHSL((buildWires.length * 0.618) % 1, 0.55, 0.62);
+    const l = new THREE.LineSegments(new THREE.WireframeGeometry(m.geometry), new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0, depthWrite: false }));
+    l.raycast = () => {};
+    l.userData.mesh = m;
+    l.userData.born = performance.now();
+    m.add(l);
+    m.userData.shaded = m.material;
+    m.material = clay;
+    buildWires.push(l);
+  }
+}
+
+function placeBuildCamera(t) {
+  const k = 1 - Math.pow(1 - Math.min(1, t), 3);
+  camera.position.lerpVectors(camStart, camFinal, k);
+  camera.lookAt(controls.target);
+}
+
+function buildFrame() {
+  if (!building) return;
+  wireNewMeshes();
+  const now = performance.now();
+  for (const l of buildWires) l.material.opacity = Math.min(0.42, ((now - l.userData.born) / 800) * 0.42);
+  placeBuildCamera((now - buildStart) / PUSH_MS);
+  renderer.render(scene, camera);
+  requestAnimationFrame(buildFrame);
+}
+
 // ------------------------------------------------------------------ boot
 
-function boot() {
-  room = buildRoom(scene);
+async function boot() {
+  buildPost();
+  resize();
+  scene.background = wireBg;
+  document.body.classList.add('building');
+  requestAnimationFrame(buildFrame);
+  // yield a frame between stages so the construction is visible
+  const step = (label) => {
+    loadingEl.textContent = `${label}…`;
+    return new Promise((r) => requestAnimationFrame(() => setTimeout(r, 0)));
+  };
+
+  room = await buildRoom(scene, step);
   for (const a of room.lampAnchors) {
     const s = new PhysicalSpotLight(0xffc68a, 0);
     s.position.copy(a);
@@ -451,27 +568,61 @@ function boot() {
     scene.add(s, s.target);
     downlights.push(s);
   }
-  buildPost();
+  // let the camera finish its push-in over the completed wireframe
+  loadingEl.textContent = 'Letting the light in…';
+  while (performance.now() - buildStart < PUSH_MS) await step('Letting the light in');
+
+  // snapshot the final wireframe frame, swap to the real scene underneath, and dissolve
+  building = false;
+  wireNewMeshes();
+  buildWires.forEach((l) => { l.material.opacity = 0.42; });
+  placeBuildCamera(1);
+  renderer.render(scene, camera);
+  const snap = document.getElementById('snap');
+  snap.width = renderer.domElement.width;
+  snap.height = renderer.domElement.height;
+  snap.getContext('2d').drawImage(renderer.domElement, 0, 0);
+  snap.style.opacity = '1';
+
+  for (const l of buildWires) {
+    const m = l.userData.mesh;
+    m.material = m.userData.shaded;
+    delete m.userData.shaded;
+    l.visible = false;
+    l.material.opacity = 0.38;
+  }
+  wires = buildWires; // reused by "Show meshes"
   for (const m of meshes()) {
     const g = m.geometry;
     triangleCount += (g.index ? g.index.count : g.attributes.position.count) / 3;
   }
-  resize();
+  scene.background = sky.bg;
+  controls.update();
   applyLighting(true);
-  composer.render();
-  loadingEl.classList.add('gone');
+  composer.render(); // compiles the real materials while the snapshot covers the screen
+
+  requestAnimationFrame(() => {
+    snap.classList.add('fade');
+    loadingEl.classList.add('gone');
+    document.body.classList.remove('building');
+  });
   requestAnimationFrame(frame);
-  if (opts.pathTrace) {
-    setTimeout(() => {
-      try {
-        initPathTracer();
-        dirty();
-      } catch (e) {
-        console.error(e);
-        opts.pathTrace = false;
-        gui.controllersRecursive().forEach((c) => c.updateDisplay());
-      }
-    }, 300);
-  }
+  if (opts.pathTrace) startPathTracer(2000);
+}
+
+// The path tracer is built on demand: it needs a BVH of the whole scene, which takes a moment.
+function startPathTracer(delay) {
+  if (pathTracer || !room) return;
+  setTimeout(() => {
+    if (pathTracer) return;
+    try {
+      initPathTracer();
+      dirty();
+    } catch (e) {
+      console.error(e);
+      opts.pathTrace = false;
+      gui.controllersRecursive().forEach((c) => c.updateDisplay());
+    }
+  }, delay);
 }
 requestAnimationFrame(() => setTimeout(boot, 30));
