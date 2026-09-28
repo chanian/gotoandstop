@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Light Study</title>
+  <meta name="description" content="A warm living room lit by the sun, in real time. Turn the dials to change the time of day and the direction the window faces.">
+  <meta property="og:title" content="Light Study">
+  <meta property="og:description" content="A warm living room lit by the sun, in real time. Turn the dials to change the time of day and the direction the window faces.">
+  <meta property="og:image" content="https://chanian.github.io/gotoandstop/light-study/thumb.jpg">
+  <meta property="og:url" content="https://chanian.github.io/gotoandstop/light-study/">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --dial: 150px;
+      --panel: rgba(22, 17, 13, 0.62);
+      --line: rgba(255, 236, 214, 0.14);
+      --text: #f4e9dc;
+      --muted: rgba(244, 233, 220, 0.6);
+      --accent: #ffb566;
+    }
+    html, body { margin: 0; height: 100%; background: #0d0a08; overflow: hidden; color: var(--text); }
+    body { font: 13px/1.4 Inter, system-ui, sans-serif; }
+    canvas { display: block; touch-action: none; }
+
+    #title { position: fixed; left: 20px; top: 16px; pointer-events: none; text-shadow: 0 1px 8px rgba(0, 0, 0, .5); }
+    #title h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: .02em; }
+    #title p { margin: 2px 0 0; color: var(--muted); font-size: 12px; }
+    #back { position: fixed; left: 20px; bottom: 16px; color: var(--muted); text-decoration: none; font-size: 12px; z-index: 5; }
+    #back:hover { color: var(--text); }
+
+    #ui {
+      position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%);
+      display: flex; align-items: center; gap: 22px; padding: 14px 22px;
+      background: var(--panel); border: 1px solid var(--line); border-radius: 24px;
+      backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2);
+      box-shadow: 0 10px 40px rgba(0, 0, 0, .35); user-select: none; -webkit-user-select: none;
+    }
+    .dial { position: relative; width: var(--dial); height: var(--dial); border-radius: 50%; touch-action: none; cursor: grab; }
+    .dial.active { cursor: grabbing; }
+    .ring { position: absolute; inset: 0; border-radius: 50%; }
+    .time-ring {
+      background: conic-gradient(from 0deg, #cfe4ff 0deg, #ffe2b0 62deg, #ff9f5c 84deg, #b0506a 98deg, #2b2d5a 118deg, #0b0d1c 180deg,
+        #2b2d5a 242deg, #b0506a 262deg, #ff9f5c 276deg, #ffe2b0 298deg, #cfe4ff 360deg);
+      -webkit-mask: radial-gradient(circle closest-side, transparent 72%, #000 73%, #000 98%, transparent 99%);
+      mask: radial-gradient(circle closest-side, transparent 72%, #000 73%, #000 98%, transparent 99%);
+      opacity: .92;
+    }
+    .compass-ring {
+      background: radial-gradient(circle closest-side, transparent 72%, rgba(255, 236, 214, .09) 73%, rgba(255, 236, 214, .09) 98%, transparent 99%);
+    }
+    .ticks i {
+      position: absolute; left: 50%; top: calc(var(--dial) * 0.5 - var(--dial) * 0.345); width: 1px; height: 4px; margin-left: -.5px;
+      background: rgba(255, 244, 230, .28); transform-origin: 50% calc(var(--dial) * 0.345);
+    }
+    .ticks i.major { height: 7px; background: rgba(255, 244, 230, .6); }
+    .hour-label { position: absolute; transform: translate(-50%, -50%); font-size: 10px; color: var(--muted); pointer-events: none; }
+    .hour-label.cardinal { font-weight: 600; color: rgba(244, 233, 220, .75); }
+    .center { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); text-align: center; pointer-events: none; }
+    .center .big { font-size: 20px; font-weight: 600; font-variant-numeric: tabular-nums; letter-spacing: .01em; }
+    .center .small { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: .1em; margin-top: 1px; white-space: nowrap; }
+
+    .knob { position: absolute; width: 24px; height: 24px; transform: translate(-50%, -50%); pointer-events: none; }
+    .knob .orb {
+      position: absolute; inset: 0; border-radius: 50%;
+      background: radial-gradient(circle at 40% 40%, #fff8e0, #ffc15e 60%, #ff9a3c);
+      box-shadow: 0 0 14px 4px rgba(255, 180, 90, .55), 0 0 0 2px rgba(20, 14, 10, .5);
+      transition: background .6s, box-shadow .6s;
+    }
+    .knob.moon .orb {
+      background: radial-gradient(circle at 38% 38%, #ffffff, #cfd8f0 70%);
+      box-shadow: inset -6px -3px 0 1px rgba(40, 46, 80, .9), 0 0 12px 3px rgba(170, 190, 255, .35), 0 0 0 2px rgba(20, 14, 10, .5);
+    }
+    .sun-dot {
+      position: absolute; width: 9px; height: 9px; border-radius: 50%; transform: translate(-50%, -50%);
+      background: #ffc15e; box-shadow: 0 0 8px 2px rgba(255, 180, 90, .6); pointer-events: none; transition: opacity .4s;
+    }
+    .sun-dot.down { opacity: .25; }
+    .window-mark { position: absolute; width: 30px; height: 30px; pointer-events: none; }
+    .window-mark span {
+      position: absolute; left: 50%; top: 50%; width: 20px; height: 5px; transform: translate(-50%, -50%);
+      background: var(--text); border-radius: 2px; box-shadow: 0 0 0 2px rgba(20, 14, 10, .45);
+    }
+    .window-mark span::after {
+      content: ''; position: absolute; left: 50%; top: -11px; transform: translateX(-50%);
+      border-left: 9px solid transparent; border-right: 9px solid transparent; border-bottom: 10px solid rgba(255, 213, 150, .4);
+    }
+
+    .middle { display: flex; flex-direction: column; gap: 10px; align-items: stretch; }
+    .presets { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+    button {
+      font: 500 12px Inter, system-ui, sans-serif; color: var(--text); background: rgba(255, 236, 214, .06);
+      border: 1px solid var(--line); border-radius: 999px; padding: 7px 12px; cursor: pointer; white-space: nowrap;
+      transition: background .2s, border-color .2s, color .2s;
+    }
+    button:hover { background: rgba(255, 236, 214, .12); }
+    button.on { background: rgba(255, 181, 102, .2); border-color: rgba(255, 181, 102, .55); color: #ffe3c2; }
+    .play { display: flex; align-items: center; justify-content: center; gap: 8px; }
+    .play span { width: 0; height: 0; border-left: 8px solid currentColor; border-top: 5px solid transparent; border-bottom: 5px solid transparent; }
+    .play.on span { width: 8px; height: 10px; border: 0; border-left: 3px solid currentColor; border-right: 3px solid currentColor; box-sizing: border-box; }
+
+    .lil-gui.root { --background-color: rgba(22, 17, 13, .85); --title-background-color: rgba(30, 24, 18, .9); --widget-color: #3a2f26; --hover-color: #4a3d31; --focus-color: #56473a; --number-color: #ffb566; }
+
+    @media (max-width: 720px) {
+      :root { --dial: 112px; }
+      #ui { gap: 12px; padding: 10px 12px; bottom: 44px; border-radius: 18px; }
+      .presets { grid-template-columns: 1fr; gap: 4px; }
+      button { padding: 5px 9px; font-size: 11px; }
+      .center .big { font-size: 16px; }
+      #title p { display: none; }
+    }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/",
+        "lil-gui": "https://cdn.jsdelivr.net/npm/lil-gui@0.20.0/dist/lil-gui.esm.min.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  <div id="title">
+    <h1>Light Study</h1>
+    <p>Turn the dials. Drag the room to look around.</p>
+  </div>
+  <div id="ui"></div>
+  <a id="back" href="../">&larr; gotoAndStop</a>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>

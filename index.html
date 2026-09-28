@@ -90,14 +90,14 @@
 <body>
   <div class="wrap">
     <header>
-      <h1>gotoAndStop<span class="paren">(</span><span class="arg">1</span><span class="paren">);</span></h1>
+      <h1>gotoAndStop<span class="paren">(</span><span class="arg">2</span><span class="paren">);</span></h1>
       <p>A notebook of small interactive experiments. Each one is a frame on the timeline, and each one runs in the browser.</p>
     </header>
 
     <nav class="timeline" style="--cells: 30" aria-label="Experiments timeline">
       <div class="ruler" id="ruler"></div>
       <div class="track" id="track"></div>
-      <div class="playhead" style="--at: 0.0167"></div>
+      <div class="playhead" style="--at: 0.05"></div>
     </nav>
 
     <main class="grid" id="grid">
@@ -110,7 +110,16 @@
           <div class="tags"><span>webgl</span><span>ray tracing</span><span>caustics</span><span>fluid sim</span></div>
         </div>
       </a>
-      <div class="card soon">frame 02 · empty</div>
+      <a class="card" href="light-study/" data-frame="2">
+        <img src="light-study/thumb.jpg" alt="A warm modern living room with golden evening sun and leaf shadows across the wall" loading="lazy">
+        <div class="body">
+          <div class="frame">frame 02</div>
+          <h2>Light Study</h2>
+          <p>A warm living room lit by a real sun. Turn the dials for time of day and window direction, and watch leaf shadows, sheer curtains and dust in the beams.</p>
+          <div class="tags"><span>three.js</span><span>sun position</span><span>shadows</span><span>volumetrics</span></div>
+        </div>
+      </a>
+      <div class="card soon">frame 03 · empty</div>
     </main>
 
     <footer>
