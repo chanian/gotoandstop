@@ -90,14 +90,14 @@
 <body>
   <div class="wrap">
     <header>
-      <h1>gotoAndStop<span class="paren">(</span><span class="arg">2</span><span class="paren">);</span></h1>
+      <h1>gotoAndStop<span class="paren">(</span><span class="arg">3</span><span class="paren">);</span></h1>
       <p>A notebook of small interactive experiments. Each one is a frame on the timeline, and each one runs in the browser.</p>
     </header>
 
     <nav class="timeline" style="--cells: 30" aria-label="Experiments timeline">
       <div class="ruler" id="ruler"></div>
       <div class="track" id="track"></div>
-      <div class="playhead" style="--at: 0.05"></div>
+      <div class="playhead" style="--at: 0.0833"></div>
     </nav>
 
     <main class="grid" id="grid">
@@ -119,7 +119,16 @@
           <div class="tags"><span>path tracing</span><span>three.js</span><span>sun position</span><span>procedural</span></div>
         </div>
       </a>
-      <div class="card soon">frame 03 · empty</div>
+      <a class="card" href="skin-study/" data-frame="3">
+        <img src="skin-study/thumb.jpg" alt="A woman's head in profile, backlit so that warm light glows through the rim of her ear" loading="lazy">
+        <div class="body">
+          <div class="frame">frame 03</div>
+          <h2>Skin Study</h2>
+          <p>Three ways to light a face: flat polygons, texture and bump maps, and subsurface scattering gathered from a cloud of photons. Put the light behind her ear.</p>
+          <div class="tags"><span>subsurface scattering</span><span>dipole</span><span>photon map</span><span>three.js</span></div>
+        </div>
+      </a>
+      <div class="card soon">frame 04 · empty</div>
     </main>
 
     <footer>
